@@ -1,0 +1,26 @@
+name: Integration Checks
+
+on:
+  push:
+    paths:
+      - 'docker-compose.yml'
+      - 'infra/**'
+      - 'backend/**'
+  pull_request:
+    paths:
+      - 'docker-compose.yml'
+      - 'infra/**'
+      - 'backend/**'
+
+jobs:
+  docker-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate docker-compose configuration
+        run: docker-compose config
+
+      - name: Build backend image
+        run: docker-compose build backend

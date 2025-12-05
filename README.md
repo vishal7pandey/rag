@@ -10,7 +10,7 @@ Production-grade Retrieval-Augmented Generation (RAG) system with full observabi
 ### Backend
 - **Runtime**: Python 3.11+
 - **Framework**: FastAPI
-- **Dependency Management**: Poetry
+- **Dependency Management**: uv
 - **Database**: PostgreSQL 16
 - **Vector Database**: Pinecone
 - **Cache**: Redis
@@ -83,16 +83,19 @@ cp .env.example .env
 
 
 ```bash
-cd backend
+cd rag-application  # If you cloned into a different directory, cd there instead
 
 
-# Option 1: Using Poetry (recommended)
-poetry install
-poetry shell
-python main.py
+# Option 1: Using uv (recommended)
+# Install dependencies defined in pyproject.toml at the repo root
+uv sync
+
+# Run the backend API
+uv run python backend/main.py
 
 
 # Option 2: Using pip + virtualenv
+cd backend
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt

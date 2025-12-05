@@ -48,9 +48,9 @@ def test_backend_structure_exists():
 def test_backend_files_exist():
     """Verify backend essential files"""
     required_files = [
-        "backend/pyproject.toml",
+        "pyproject.toml",
+        "pytest.ini",
         "backend/requirements.txt",
-        "backend/pytest.ini",
         "backend/main.py",
         "backend/__init__.py",
     ]
@@ -139,17 +139,16 @@ def test_readme_contains_required_sections():
         assert section in readme, f"README missing section: {section}"
 
 
-def test_backend_poetry_setup():
-    """Verify Poetry is properly configured"""
-    assert Path("backend/pyproject.toml").exists(), "pyproject.toml missing"
+def test_backend_uv_setup():
+    """Verify uv is available and pyproject exists at repo root"""
+    assert Path("pyproject.toml").exists(), "pyproject.toml missing at repo root"
 
     result = subprocess.run(
-        ["poetry", "check"],
-        cwd="backend",
+        ["uv", "--version"],
         capture_output=True,
         text=True,
     )
-    assert result.returncode == 0, f"Poetry check failed: {result.stderr}"
+    assert result.returncode == 0, f"uv not available: {result.stderr}"
 
 
 def test_frontend_npm_setup():

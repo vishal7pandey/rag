@@ -1,4 +1,6 @@
 FROM python:3.11-slim
+ENV UV_PROJECT_ENVIRONMENT=/app/.venv
+ENV PYTHONPATH=/app
 
 WORKDIR /app
 
@@ -8,15 +10,16 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy dependency files
-COPY backend/requirements.txt .
+# Install uv
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && ln -s /root/.local/bin/uv /usr/local/bin/uv
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy project metadata, README, and backend code
+COPY pyproject.toml README.md backend/ ./
 
-# Copy application code
-COPY backend/ .
+# Install runtime dependencies (no dev dependencies) using uv
+RUN uv sync --no-dev
 
 EXPOSE 8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uv", "run", "uvicorn", "main:app", "--app-dir", "backend", "--host", "0.0.0.0", "--port", "8000"]

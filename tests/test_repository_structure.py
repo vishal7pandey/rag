@@ -4,8 +4,11 @@ Tests run BEFORE implementation to define success criteria
 """
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
 
 
 def test_git_repository_initialized():
@@ -165,8 +168,16 @@ def test_frontend_npm_setup():
 
 def test_docker_compose_valid():
     """Verify docker-compose.yml is valid"""
+    # Prefer docker-compose if available; fall back to `docker compose`.
+    if shutil.which("docker-compose"):
+        cmd = ["docker-compose", "config"]
+    elif shutil.which("docker"):
+        cmd = ["docker", "compose", "config"]
+    else:
+        pytest.skip("docker/docker-compose not available on PATH")
+
     result = subprocess.run(
-        ["docker-compose", "config"],
+        cmd,
         capture_output=True,
         text=True,
     )

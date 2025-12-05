@@ -2,8 +2,8 @@
 Repository Structure Validation Tests
 Tests run BEFORE implementation to define success criteria
 """
+
 import json
-import os
 import subprocess
 from pathlib import Path
 

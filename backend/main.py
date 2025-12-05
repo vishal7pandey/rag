@@ -2,8 +2,11 @@
 RAG Application Backend
 FastAPI Entry Point
 """
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+from backend.api.endpoints import router as api_router
 
 
 app = FastAPI(
@@ -23,16 +26,7 @@ app.add_middleware(
 )
 
 
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    return {"status": "healthy", "version": "0.1.0"}
-
-
-@app.get("/")
-async def root():
-    """Root endpoint"""
-    return {"message": "RAG Application API", "docs": "/docs"}
+app.include_router(api_router)
 
 
 if __name__ == "__main__":

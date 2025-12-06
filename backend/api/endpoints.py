@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
@@ -19,6 +19,7 @@ from backend.api.errors import (
     to_http_exception,
 )
 from backend.api.schemas import (
+    Chunk,
     DocumentMetadata,
     HealthResponse,
     HealthStatus,
@@ -32,9 +33,17 @@ from backend.api.schemas import (
 from backend.config.settings import settings
 from backend.core.exceptions import FileValidationError, RateLimitError
 from backend.core.file_validator import FileValidator
+from backend.core.embedding_provider import EmbeddingProviderError
 from backend.core.ingestion_orchestrator import IngestionOrchestrator
 from backend.core.ingestion_store import IngestionJobStore
+from backend.core.query_models import create_query_request
+from backend.core.query_services import (
+    QueryEmbeddingService,
+    QueryOrchestrator,
+    RetrieverService,
+)
 from backend.core.rate_limiter import RateLimiter
+from backend.core.vector_storage import InMemoryVectorDBStorageLayer
 from backend.core.logging import get_logger
 
 
@@ -55,6 +64,15 @@ _INGESTION_ORCHESTRATOR = IngestionOrchestrator(
     chunking_service=None,
     embedding_service=None,
     job_store=_INGESTION_JOB_STORE,
+)
+
+# Query orchestration components for Story 011.
+_VECTOR_STORAGE = InMemoryVectorDBStorageLayer()
+_QUERY_EMBEDDING_SERVICE = QueryEmbeddingService()
+_RETRIEVER_SERVICE = RetrieverService(storage=_VECTOR_STORAGE)
+_QUERY_ORCHESTRATOR = QueryOrchestrator(
+    embedding_service=_QUERY_EMBEDDING_SERVICE,
+    retriever_service=_RETRIEVER_SERVICE,
 )
 
 
@@ -432,27 +450,103 @@ async def ingest_status_orchestrated(ingestion_id: UUID) -> IngestionResponse:
 
 @router.post("/api/query", response_model=QueryResponse, tags=["Query"])
 async def query_endpoint(payload: QueryRequest) -> QueryResponse:
-    """Stub implementation of the query endpoint.
+    """Execute dense similarity search for a query.
 
-    For now, if there are no documents indexed, return a helpful message and
-    an empty citations list, as per the Story 002 spec.
+    This implementation wires the core query orchestrator (Story 011) into the
+    existing `/api/query` endpoint. When the query embedding service is not
+    configured, it falls back to the original "no documents" stub behavior.
     """
 
-    answer = (
-        "I have no documents in my knowledge base yet. Please upload documents first."
-    )
+    from backend.core.tracing import get_trace_context
+
+    trace_ctx = get_trace_context()
 
     logger.info(
         "Query endpoint called",
         extra={"query_preview": payload.query[:100], "top_k": payload.top_k},
     )
 
+    # Build internal query request model.
+    internal_request = create_query_request(
+        query_text=payload.query,
+        top_k=payload.top_k,
+        search_type="dense",
+        filters=payload.filters or {},
+        include_metadata=payload.include_sources,
+        trace_context=trace_ctx,
+    )
+
+    try:
+        internal_response = await _QUERY_ORCHESTRATOR.query(internal_request)
+    except EmbeddingProviderError:
+        # Embedding provider not configured yet; preserve original stub behavior.
+        answer = "I have no documents in my knowledge base yet. Please upload documents first."
+        return QueryResponse(
+            query_id=uuid4(),
+            answer=answer,
+            citations=[],
+            retrieved_chunks=[],
+            latency_ms=50.0,
+            confidence_score=None,
+        )
+
+    # Map internal retrieved chunks to API Chunk models and build citations.
+    include_sources = payload.include_sources
+    retrieved_chunks_api: List[Chunk] = []
+    citations: List[Dict[str, Any]] = []
+
+    for rc in internal_response.retrieved_chunks:
+        if rc.document_id is None:
+            continue
+
+        metadata = rc.metadata if include_sources else {}
+
+        retrieved_chunks_api.append(
+            Chunk(
+                id=rc.chunk_id,
+                document_id=rc.document_id,
+                chunk_index=max(rc.rank - 1, 0),
+                content=rc.content,
+                dense_embedding=rc.embedding or [],
+                sparse_embedding={},
+                metadata=metadata,
+                quality_score=rc.quality_score,
+                embedding_model=rc.embedding_model or "text-embedding-3-small",
+                created_at=rc.created_at or datetime.now(timezone.utc),
+                updated_at=rc.updated_at or datetime.now(timezone.utc),
+            )
+        )
+
+        if include_sources:
+            citations.append(
+                {
+                    "chunk_id": str(rc.chunk_id),
+                    "document_id": str(rc.document_id),
+                    "rank": rc.rank,
+                    "similarity_score": rc.similarity_score,
+                    "source": rc.metadata.get("source"),
+                    "metadata": rc.metadata,
+                }
+            )
+
+    if not retrieved_chunks_api:
+        answer = "I have no documents in my knowledge base yet. Please upload documents first."
+        citations = []
+    else:
+        top_snippet = retrieved_chunks_api[0].content.strip().replace("\n", " ")
+        if len(top_snippet) > 200:
+            top_snippet = top_snippet[:197] + "..."
+        answer = (
+            "Retrieved relevant context for your query from the knowledge base. "
+            "Here is a representative snippet: " + top_snippet
+        )
+
     return QueryResponse(
-        query_id=uuid4(),
+        query_id=internal_response.query_id,
         answer=answer,
-        citations=[],
-        retrieved_chunks=[],
-        latency_ms=50.0,
+        citations=citations,
+        retrieved_chunks=retrieved_chunks_api,
+        latency_ms=internal_response.total_latency_ms,
         confidence_score=None,
     )
 

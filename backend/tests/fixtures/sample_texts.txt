@@ -1,0 +1,3 @@
+This is a sample document for embedding tests.
+The quick brown fox jumps over the lazy dog.
+Artificial intelligence is transforming industries.

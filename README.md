@@ -14,8 +14,8 @@ Production-grade Retrieval-Augmented Generation (RAG) system with full observabi
 - **Database**: PostgreSQL 16
 - **Vector Database**: Pinecone
 - **Cache**: Redis
-- **LLM**: OpenAI GPT-4o
-- **Embeddings**: OpenAI text-embedding-3-small
+- **LLM**: OpenAI gpt-5-nano
+- **Embeddings**: OpenAI text-embedding-3-small (1536-dim)
 - **Observability**: LangSmith, Prometheus, Grafana
 
 
@@ -178,31 +178,46 @@ Copy `.env.example`  to `.env` and configure:
 
 
 ```bash
-# OpenAI
-OPENAI_API_KEY=sk-...
-OPENAI_ORG_ID=org-...
+# OpenAI Provider
+OPENAI_API_KEY=sk-your-api-key
+OPENAI_ORG_ID=org-your-org-id   # optional
+
+# Embedding Configuration
+OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+OPENAI_EMBEDDING_BATCH_SIZE=100
+
+# Generation Configuration
+OPENAI_GENERATION_MODEL=gpt-5-nano
+OPENAI_TEMPERATURE=0.3
+OPENAI_MAX_OUTPUT_TOKENS=1000
 
 
 # Pinecone
-PINECONE_API_KEY=...
-PINECONE_ENVIRONMENT=...
+PINECONE_API_KEY=your-pinecone-api-key
+PINECONE_ENVIRONMENT=us-east-1-aws
+DENSE_INDEX_NAME=rag-dense
+SPARSE_INDEX_NAME=rag-sparse
 
 
-# Database
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/ragdb
+# Database (local Docker Compose)
+DATABASE_URL=postgresql://postgres:postgres@db:5432/ragdb
 
 
 # Redis
-REDIS_URL=redis://localhost:6379
+REDIS_URL=redis://redis:6379
 
 
-# LangSmith
-LANGSMITH_API_KEY=...
+# LangSmith (optional)
+LANGSMITH_API_KEY=your-langsmith-api-key
 LANGSMITH_PROJECT=rag-system
 
 
 # Security
-JWT_SECRET=your-secret-key
+JWT_SECRET=your-secret-key-change-in-production
+
+
+# Application
+ENVIRONMENT=dev  # dev | staging | prod
 ```
 
 

@@ -1,0 +1,15 @@
+[
+  {
+    "messages": [
+      {"role": "system", "content": "You are a helpful assistant."},
+      {"role": "user", "content": "What is 2+2?"}
+    ],
+    "expected_contains": ["4"]
+  },
+  {
+    "messages": [
+      {"role": "user", "content": "Explain AI in one sentence."}
+    ],
+    "expected_min_length": 20
+  }
+]

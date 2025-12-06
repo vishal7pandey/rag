@@ -156,3 +156,50 @@ class QueryResponse(BaseModel):
     retrieved_chunks: Optional[List[Chunk]] = None
     latency_ms: float = Field(ge=0)
     confidence_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+
+
+# ============================================================================
+# RETRIEVAL ENDPOINT (/retrieve)
+# ============================================================================
+
+
+class RetrievalRequest(BaseModel):
+    """Request body for POST /retrieve.
+
+    Mirrors the validation semantics of QueryRequest but is retrieval-focused
+    and does not include answer generation concerns.
+    """
+
+    query: str = Field(..., min_length=1, max_length=5000)
+    top_k: int = Field(default=10, ge=1, le=100)
+    filters: Optional[Dict[str, Any]] = None
+    include_sources: bool = Field(default=True)
+
+
+class RetrievalChunk(BaseModel):
+    """Chunk representation returned by the /retrieve endpoint."""
+
+    chunk_id: UUID
+    content: str
+    similarity_score: float = Field(ge=0.0, le=1.0)
+    rank: int = Field(ge=1)
+    source: Dict[str, Any] = Field(default_factory=dict)
+
+
+class RetrievalMetrics(BaseModel):
+    """Metrics for a retrieval operation."""
+
+    embedding_latency_ms: float = Field(ge=0.0)
+    retrieval_latency_ms: float = Field(ge=0.0)
+    total_latency_ms: float = Field(ge=0.0)
+    total_results_available: int = Field(ge=0)
+    results_returned: int = Field(ge=0)
+
+
+class RetrievalResponse(BaseModel):
+    """Response body for POST /retrieve."""
+
+    query_id: UUID
+    query_text: str
+    retrieved_chunks: List[RetrievalChunk] = Field(default_factory=list)
+    metrics: RetrievalMetrics

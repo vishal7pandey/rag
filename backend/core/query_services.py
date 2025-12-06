@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from backend.core.embedding_provider import EmbeddingProviderError
 from backend.core.logging import get_logger
+from backend.core.query_cache import QueryEmbeddingCache
 from backend.core.query_models import (
     QueryRequest,
     QueryResponseInternal,
@@ -124,9 +125,11 @@ class QueryOrchestrator:
         self,
         embedding_service: QueryEmbeddingService,
         retriever_service: RetrieverService,
+        embedding_cache: Optional[QueryEmbeddingCache] = None,
     ) -> None:
         self._embedding_service = embedding_service
         self._retriever_service = retriever_service
+        self._embedding_cache = embedding_cache
         self._logger = get_logger("rag.core.query_orchestrator")
 
     async def query(self, request: QueryRequest) -> QueryResponseInternal:
@@ -135,12 +138,28 @@ class QueryOrchestrator:
         trace_context = request.trace_context or {}
         start_total = time.time()
 
-        # Stage 1: Embed query text
+        # Stage 1: Embed query text (with optional cache).
         start_embed = time.time()
-        query_embedding = await self._embedding_service.embed_query(
-            request.query_text,
-            trace_context=trace_context,
-        )
+        cache_hit = False
+        query_embedding: List[float]
+
+        if self._embedding_cache is not None:
+            cached = self._embedding_cache.get(request.query_text)
+            if cached is not None:
+                query_embedding = cached
+                cache_hit = True
+            else:
+                query_embedding = await self._embedding_service.embed_query(
+                    request.query_text,
+                    trace_context=trace_context,
+                )
+                self._embedding_cache.set(request.query_text, query_embedding)
+        else:
+            query_embedding = await self._embedding_service.embed_query(
+                request.query_text,
+                trace_context=trace_context,
+            )
+
         embed_latency_ms = (time.time() - start_embed) * 1000.0
         request.query_embedding = query_embedding
 
@@ -180,6 +199,8 @@ class QueryOrchestrator:
             "search_type": request.search_type,
             "total_results_available": len(retrieved_chunks),
             "filters_applied": request.filters or {},
+            "embedding_cache_enabled": self._embedding_cache is not None,
+            "embedding_cache_hit": cache_hit,
         }
 
         return QueryResponseInternal(

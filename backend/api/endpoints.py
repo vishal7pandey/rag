@@ -8,7 +8,7 @@ later stories.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from uuid import UUID, uuid4
 
@@ -32,6 +32,8 @@ from backend.api.schemas import (
 from backend.config.settings import settings
 from backend.core.exceptions import FileValidationError, RateLimitError
 from backend.core.file_validator import FileValidator
+from backend.core.ingestion_orchestrator import IngestionOrchestrator
+from backend.core.ingestion_store import IngestionJobStore
 from backend.core.rate_limiter import RateLimiter
 from backend.core.logging import get_logger
 
@@ -40,11 +42,20 @@ router = APIRouter()
 logger = get_logger("rag.api.endpoints")
 
 
-# In-memory store for ingestion status (stub implementation)
+# In-memory store for ingestion status (stub implementation for Story 006).
 _INGESTION_STORE: Dict[UUID, IngestionResponse] = {}
 
 # Simple in-memory rate limiter instance for uploads.
 _RATE_LIMITER = RateLimiter()
+
+# Ingestion orchestration components for Story 010.
+_INGESTION_JOB_STORE = IngestionJobStore()
+_INGESTION_ORCHESTRATOR = IngestionOrchestrator(
+    extraction_service=None,
+    chunking_service=None,
+    embedding_service=None,
+    job_store=_INGESTION_JOB_STORE,
+)
 
 
 def _evaluate_dependencies() -> Dict[str, str]:
@@ -94,7 +105,7 @@ async def health_check() -> HealthResponse:
         status=overall_status,
         version=settings.VERSION,
         environment=settings.ENVIRONMENT,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         dependencies=dependencies,
     )
 
@@ -245,6 +256,178 @@ async def ingest_status(ingestion_id: UUID) -> IngestionResponse:
         extra={"ingestion_id": str(ingestion_id), "status": resp.status.value},
     )
     return resp
+
+
+@router.post(
+    "/ingest",
+    response_model=IngestionResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    tags=["Ingestion"],
+)
+async def ingest(
+    files: Optional[List[UploadFile]] = File(None),
+    document_metadata: Optional[str] = Form(None),
+    ingestion_config: Optional[str] = Form(None),
+) -> IngestionResponse:
+    """Orchestrated ingestion endpoint.
+
+    This endpoint reuses the same validation logic as ``/api/ingest/upload`` but
+    also runs the extraction → chunking → embedding orchestration synchronously
+    using the core ingestion orchestrator.
+    """
+
+    if not files:
+        raise FileValidationError(message="No files provided", validation_errors=[])
+
+    from backend.core.tracing import get_trace_context
+
+    trace_ctx = get_trace_context()
+    user_id = trace_ctx.get("user_id") or "anonymous"
+
+    is_allowed, retry_after = _RATE_LIMITER.is_allowed(
+        user_id=user_id,
+        limit=100,
+        window_seconds=3600,
+    )
+    if not is_allowed:
+        raise RateLimitError(
+            message="Maximum 100 uploads per hour exceeded",
+            retry_after_seconds=retry_after or 0,
+            details={"user_id": user_id, "limit": 100, "period": "1 hour"},
+        )
+
+    metadata_model: Optional[DocumentMetadata] = None
+    config_model: Optional[IngestionConfig] = None
+
+    if document_metadata is not None:
+        try:
+            metadata_model = DocumentMetadata(**json.loads(document_metadata))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Invalid document_metadata payload", exc_info=exc)
+            raise FileValidationError(
+                message="Invalid document_metadata JSON",
+                validation_errors=[
+                    {
+                        "field": "document_metadata",
+                        "error": "Must be valid JSON or schema",
+                    }
+                ],
+            ) from exc
+
+    if ingestion_config is not None:
+        try:
+            config_model = IngestionConfig(**json.loads(ingestion_config))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Invalid ingestion_config payload", exc_info=exc)
+            raise FileValidationError(
+                message="Invalid ingestion_config JSON",
+                validation_errors=[
+                    {
+                        "field": "ingestion_config",
+                        "error": "Must be valid JSON or schema",
+                    }
+                ],
+            ) from exc
+
+    # Read file contents for validation and orchestration.
+    file_tuples: List[tuple[str, bytes]] = []
+    for file in files or []:
+        content = await file.read()
+        file_tuples.append((file.filename, content))
+
+    validator = FileValidator()
+    validation_results, batch_error = validator.validate_batch(file_tuples)
+
+    if batch_error:
+        validation_errors = [
+            {"filename": r.filename, "error": r.error or "Unknown error"}
+            for r in validation_results
+            if not r.is_valid
+        ]
+        raise FileValidationError(
+            message=batch_error, validation_errors=validation_errors
+        )
+
+    ingestion_id = uuid4()
+    document_id = uuid4()
+
+    uploaded_files: List[UploadedFileInfo] = [
+        UploadedFileInfo(
+            filename=r.filename,
+            file_size_mb=r.file_size_mb,
+            mime_type=r.mime_type,
+        )
+        for r in validation_results
+        if r.is_valid
+    ]
+
+    # Create an IngestionJob in the core job store.
+    job = _INGESTION_JOB_STORE.create_job(
+        ingestion_id=ingestion_id,
+        document_id=document_id,
+        files=uploaded_files,
+    )
+
+    # Run the orchestration synchronously for this story.
+    await _INGESTION_ORCHESTRATOR.ingest_and_store(
+        job_id=job.ingestion_id,
+        files=file_tuples,
+        document_metadata=metadata_model or DocumentMetadata(),
+        ingestion_config=config_model or IngestionConfig(),
+        trace_context=trace_ctx,
+    )
+
+    # Reload the job to reflect final state.
+    final_job = _INGESTION_JOB_STORE.get_job(ingestion_id) or job
+
+    logger.info(
+        "Ingestion orchestrated",
+        extra={
+            "ingestion_id": str(ingestion_id),
+            "status": final_job.status.value,
+            "chunks_created": final_job.chunks_created,
+        },
+    )
+
+    return IngestionResponse(
+        ingestion_id=final_job.ingestion_id,
+        status=IngestionStatus(final_job.status.value),
+        document_id=final_job.document_id,
+        files=uploaded_files,
+        chunks_created=final_job.chunks_created,
+        progress_percent=final_job.progress_percent,
+        error_message=final_job.error_message,
+        created_at=final_job.created_at,
+    )
+
+
+@router.get(
+    "/ingest/status/{ingestion_id}",
+    response_model=IngestionResponse,
+    tags=["Ingestion"],
+)
+async def ingest_status_orchestrated(ingestion_id: UUID) -> IngestionResponse:
+    """Return current orchestrated ingestion status for the given ingestion_id."""
+
+    job = _INGESTION_JOB_STORE.get_job(ingestion_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Ingestion not found")
+
+    logger.info(
+        "Ingestion status (orchestrated) requested",
+        extra={"ingestion_id": str(ingestion_id), "status": job.status.value},
+    )
+
+    return IngestionResponse(
+        ingestion_id=job.ingestion_id,
+        status=IngestionStatus(job.status.value),
+        document_id=job.document_id,
+        files=job.files,
+        chunks_created=job.chunks_created,
+        progress_percent=job.progress_percent,
+        error_message=job.error_message,
+        created_at=job.created_at,
+    )
 
 
 @router.post("/api/query", response_model=QueryResponse, tags=["Query"])

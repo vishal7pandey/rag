@@ -7,7 +7,7 @@ included in all error responses.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 from fastapi import FastAPI, Request, status
@@ -67,7 +67,7 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
             "message": message,
             "status_code": status_code,
             "trace_id": trace_id,
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "details": details,
         }
     }

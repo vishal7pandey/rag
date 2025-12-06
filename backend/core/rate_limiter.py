@@ -8,7 +8,7 @@ swap this out for a Redis-backed implementation.
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import DefaultDict, List, Optional, Tuple
 
 
@@ -36,7 +36,7 @@ class RateLimiter:
         long the caller should wait before retrying.
         """
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         window_start = now - timedelta(seconds=window_seconds)
 
         # Drop timestamps outside the window.

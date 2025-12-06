@@ -7,16 +7,24 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.endpoints import router as api_router
+from backend.api.error_handler import register_exception_handlers
+from backend.api.middleware import LoggingMiddleware
+from backend.config.settings import settings
+from backend.core.logging import setup_logging
 
+
+# Configure structured logging before creating the app
+setup_logging(environment=settings.ENVIRONMENT)
 
 app = FastAPI(
     title="RAG Application API",
     description="Production-grade RAG system backend",
-    version="0.1.0",
+    version=settings.VERSION,
 )
 
 
-# CORS configuration for local development
+# Logging + CORS configuration for local development
+app.add_middleware(LoggingMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],
@@ -26,6 +34,7 @@ app.add_middleware(
 )
 
 
+register_exception_handlers(app)
 app.include_router(api_router)
 
 

@@ -8,7 +8,6 @@ later stories.
 from __future__ import annotations
 
 import json
-import logging
 from datetime import datetime
 from typing import Dict, List, Optional
 from uuid import UUID, uuid4
@@ -31,10 +30,11 @@ from backend.api.schemas import (
     QueryResponse,
 )
 from backend.config.settings import settings
+from backend.core.logging import get_logger
 
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
+logger = get_logger("rag.api.endpoints")
 
 
 # In-memory store for ingestion status (stub implementation)

@@ -72,10 +72,18 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
         }
     }
 
+    headers: Dict[str, str] = {"X-Trace-ID": trace_id}
+    # For rate-limited responses, include Retry-After if available.
+    retry_after = (
+        details.get("retry_after_seconds") if isinstance(details, dict) else None
+    )
+    if status_code == status.HTTP_429_TOO_MANY_REQUESTS and retry_after is not None:
+        headers["Retry-After"] = str(retry_after)
+
     return JSONResponse(
         status_code=status_code,
         content=error_envelope,
-        headers={"X-Trace-ID": trace_id},
+        headers=headers,
     )
 
 

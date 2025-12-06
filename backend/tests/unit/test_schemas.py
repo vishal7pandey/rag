@@ -4,7 +4,13 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from backend.api.schemas import HealthResponse, IngestionResponse, QueryRequest
+from backend.api.schemas import (
+    DocumentMetadata,
+    HealthResponse,
+    IngestionConfig,
+    IngestionResponse,
+    QueryRequest,
+)
 
 
 def test_health_response_valid() -> None:
@@ -41,6 +47,34 @@ def test_ingestion_response_defaults() -> None:
     assert resp.progress_percent == 0
     assert resp.error_message is None
     assert resp.document_id is None
+
+
+def test_document_metadata_defaults_and_overrides() -> None:
+    """DocumentMetadata provides sensible defaults and accepts overrides."""
+
+    default_meta = DocumentMetadata()
+    assert default_meta.category == "general"
+    assert default_meta.language == "en"
+    assert default_meta.source is None
+
+    custom_meta = DocumentMetadata(
+        category="technical", language="fr", source="unit-test"
+    )
+    assert custom_meta.category == "technical"
+    assert custom_meta.language == "fr"
+    assert custom_meta.source == "unit-test"
+
+
+def test_ingestion_config_validation_ranges() -> None:
+    """IngestionConfig enforces reasonable ranges for chunking parameters."""
+
+    cfg = IngestionConfig(chunk_size_tokens=512, chunk_overlap_tokens=32)
+    assert cfg.chunk_size_tokens == 512
+    assert cfg.chunk_overlap_tokens == 32
+
+    # Too-large chunk_size_tokens should fail validation
+    with pytest.raises(ValidationError):
+        IngestionConfig(chunk_size_tokens=5000)
 
 
 def test_query_request_validation() -> None:

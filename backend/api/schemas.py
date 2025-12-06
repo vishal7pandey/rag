@@ -75,6 +75,14 @@ class DocumentMetadata(BaseModel):
     source: Optional[str] = Field(default=None)
 
 
+class UploadedFileInfo(BaseModel):
+    """Information about a file included in an ingestion request."""
+
+    filename: str
+    file_size_mb: float
+    mime_type: str
+
+
 class IngestionConfig(BaseModel):
     """Configuration for the ingestion pipeline."""
 
@@ -96,6 +104,10 @@ class IngestionResponse(BaseModel):
     progress_percent: int = Field(default=0, ge=0, le=100)
     error_message: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    files: List[UploadedFileInfo] = Field(
+        default_factory=list,
+        description="Optional per-file metadata for this ingestion request.",
+    )
 
     @field_validator("progress_percent")
     @classmethod

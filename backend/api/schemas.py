@@ -6,7 +6,7 @@ backend for health, ingestion, and query endpoints.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -30,7 +30,7 @@ class HealthResponse(BaseModel):
 
     status: HealthStatus
     version: str = Field(..., description="API version (semver)")
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     environment: str = Field(
         default="dev", description="Deployment environment: dev, staging, or prod"
     )
@@ -103,7 +103,7 @@ class IngestionResponse(BaseModel):
     chunks_created: int = Field(default=0, ge=0)
     progress_percent: int = Field(default=0, ge=0, le=100)
     error_message: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     files: List[UploadedFileInfo] = Field(
         default_factory=list,
         description="Optional per-file metadata for this ingestion request.",

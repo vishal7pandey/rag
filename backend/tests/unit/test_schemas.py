@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
@@ -19,7 +19,7 @@ def test_health_response_valid() -> None:
     data = {
         "status": "healthy",
         "version": "0.1.0",
-        "timestamp": datetime.utcnow(),
+        "timestamp": datetime.now(timezone.utc),
         "environment": "dev",
     }
     resp = HealthResponse(**data)

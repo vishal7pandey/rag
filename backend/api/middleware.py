@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Callable, Awaitable
 
 from fastapi import Request, Response
@@ -44,7 +44,8 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         trace_id = request.headers.get("X-Trace-ID", str(uuid.uuid4()))
         user_id = request.headers.get("X-User-ID", "anonymous")
         request_id = (
-            f"req-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
+            f"req-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-"
+            f"{uuid.uuid4().hex[:8]}"
         )
 
         # Create and bind trace context for downstream components.

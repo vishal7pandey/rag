@@ -8,7 +8,7 @@ consistent JSON error envelope.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
 class RAGException(Exception):
@@ -88,3 +88,35 @@ class ValidationError(BadRequestError):
 
 class ResourceExistsError(ConflictError):
     """Resource already exists."""
+
+
+class FileValidationError(BadRequestError):
+    """File validation failed for one or more uploaded files."""
+
+    def __init__(
+        self,
+        message: str,
+        validation_errors: Optional[List[Dict[str, str]]] = None,
+    ) -> None:
+        details = {"validation_errors": validation_errors or []}
+        super().__init__(message, details=details)
+
+
+class RateLimitError(RAGException):
+    """Rate limit exceeded for a user or API key."""
+
+    def __init__(
+        self,
+        message: str,
+        retry_after_seconds: int = 3600,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        extra_details: Dict[str, Any] = {"retry_after_seconds": retry_after_seconds}
+        if details:
+            extra_details.update(details)
+        super().__init__(
+            message,
+            status_code=429,
+            error_code="RateLimitError",
+            details=extra_details,
+        )

@@ -9,7 +9,9 @@ def test_ingest_upload_requires_files(client) -> None:
     response = client.post("/api/ingest/upload", files=[])
     assert response.status_code == 400
     body = response.json()
-    assert body["detail"] == "No files provided"
+    assert "error" in body
+    assert body["error"]["type"] == "FileValidationError"
+    assert "No files provided" in body["error"]["message"]
 
 
 def test_ingest_upload_accepts_file(client, tmp_path) -> None:

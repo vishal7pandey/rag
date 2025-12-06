@@ -90,6 +90,31 @@ class ResourceExistsError(ConflictError):
     """Resource already exists."""
 
 
+class ExtractionError(RAGException):
+    """Extraction failed for a particular file.
+
+    This error is used by the text extraction pipeline (Story 007) and is
+    aligned with the global RAGException hierarchy so that the API error
+    handler can produce a consistent JSON envelope.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        filename: str,
+        error_type: str,
+        details: Optional[Dict[str, Any]] = None,
+        status_code: int = 500,
+    ) -> None:
+        merged_details: Dict[str, Any] = {
+            "filename": filename,
+            "error_type": error_type,
+        }
+        if details:
+            merged_details.update(details)
+        super().__init__(message, status_code=status_code, details=merged_details)
+
+
 class FileValidationError(BadRequestError):
     """File validation failed for one or more uploaded files."""
 

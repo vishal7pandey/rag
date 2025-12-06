@@ -28,6 +28,10 @@ from backend.api.schemas import (
     IngestionStatus,
     QueryRequest,
     QueryResponse,
+    RetrievalChunk,
+    RetrievalMetrics,
+    RetrievalRequest,
+    RetrievalResponse,
     UploadedFileInfo,
 )
 from backend.config.settings import settings
@@ -36,6 +40,7 @@ from backend.core.file_validator import FileValidator
 from backend.core.embedding_provider import EmbeddingProviderError
 from backend.core.ingestion_orchestrator import IngestionOrchestrator
 from backend.core.ingestion_store import IngestionJobStore
+from backend.core.query_cache import QueryEmbeddingCache
 from backend.core.query_models import create_query_request
 from backend.core.query_services import (
     QueryEmbeddingService,
@@ -66,13 +71,15 @@ _INGESTION_ORCHESTRATOR = IngestionOrchestrator(
     job_store=_INGESTION_JOB_STORE,
 )
 
-# Query orchestration components for Story 011.
+# Query orchestration components for Story 011 / 012.
 _VECTOR_STORAGE = InMemoryVectorDBStorageLayer()
 _QUERY_EMBEDDING_SERVICE = QueryEmbeddingService()
+_QUERY_EMBEDDING_CACHE = QueryEmbeddingCache()
 _RETRIEVER_SERVICE = RetrieverService(storage=_VECTOR_STORAGE)
 _QUERY_ORCHESTRATOR = QueryOrchestrator(
     embedding_service=_QUERY_EMBEDDING_SERVICE,
     retriever_service=_RETRIEVER_SERVICE,
+    embedding_cache=_QUERY_EMBEDDING_CACHE,
 )
 
 
@@ -548,6 +555,91 @@ async def query_endpoint(payload: QueryRequest) -> QueryResponse:
         retrieved_chunks=retrieved_chunks_api,
         latency_ms=internal_response.total_latency_ms,
         confidence_score=None,
+    )
+
+
+@router.post("/retrieve", response_model=RetrievalResponse, tags=["Retrieval"])
+async def retrieve_endpoint(payload: RetrievalRequest) -> RetrievalResponse:
+    """Return relevant chunks and metrics for a retrieval query.
+
+    This endpoint exposes the retrieval layer directly: it runs the same
+    embed → retrieve pipeline used by `/api/query` but returns a
+    retrieval-centric view (chunks + similarity scores + metrics) without any
+    generated answer text.
+    """
+
+    from backend.core.tracing import get_trace_context
+
+    trace_ctx = get_trace_context()
+
+    logger.info(
+        "Retrieve endpoint called",
+        extra={"query_preview": payload.query[:100], "top_k": payload.top_k},
+    )
+
+    internal_request = create_query_request(
+        query_text=payload.query,
+        top_k=payload.top_k,
+        search_type="dense",
+        filters=payload.filters or {},
+        include_metadata=payload.include_sources,
+        trace_context=trace_ctx,
+    )
+
+    try:
+        internal_response = await _QUERY_ORCHESTRATOR.query(internal_request)
+    except EmbeddingProviderError as exc:  # pragma: no cover - rare path
+        logger.error(
+            "Retrieval failed due to embedding provider error",
+            exc_info=exc,
+        )
+        raise to_http_exception(ServiceUnavailableError()) from exc
+
+    retrieved_chunks: List[RetrievalChunk] = []
+
+    for rc in internal_response.retrieved_chunks:
+        if rc.document_id is None:
+            # Retrieval surface does not require document_id, but when it is not
+            # present we also have very little useful source attribution, so we
+            # skip such entries.
+            continue
+
+        if payload.include_sources:
+            source: Dict[str, Any] = {"document_id": str(rc.document_id)}
+            # Surface any known source-related metadata as-is.
+            source.update(rc.metadata)
+        else:
+            source = {}
+
+        retrieved_chunks.append(
+            RetrievalChunk(
+                chunk_id=rc.chunk_id,
+                content=rc.content,
+                similarity_score=rc.similarity_score,
+                rank=rc.rank,
+                source=source,
+            )
+        )
+
+    metrics = RetrievalMetrics(
+        embedding_latency_ms=float(
+            internal_response.metrics.get("embedding_latency_ms", 0.0)
+        ),
+        retrieval_latency_ms=float(
+            internal_response.metrics.get("retrieval_latency_ms", 0.0)
+        ),
+        total_latency_ms=float(internal_response.metrics.get("total_latency_ms", 0.0)),
+        total_results_available=int(
+            internal_response.metrics.get("total_results_available", 0)
+        ),
+        results_returned=len(retrieved_chunks),
+    )
+
+    return RetrievalResponse(
+        query_id=internal_response.query_id,
+        query_text=internal_response.query_text,
+        retrieved_chunks=retrieved_chunks,
+        metrics=metrics,
     )
 
 

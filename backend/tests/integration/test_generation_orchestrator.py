@@ -51,7 +51,7 @@ class FakeGenerationClient:
 
         return {
             "content": "Based on policy [Source 1], remote work is allowed.",
-            "model": "gpt-4o",
+            "model": "gpt-5-nano",
             "usage": {"prompt_tokens": 50, "completion_tokens": 20, "total_tokens": 70},
             "finish_reason": "stop",
             "latency_ms": 42.0,

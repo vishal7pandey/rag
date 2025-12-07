@@ -29,6 +29,7 @@ class StubGenerationOrchestrator:
         query_request: QueryGenerationRequest,
         trace_context: dict | None = None,
         timeout_manager: object | None = None,
+        artifact_logger: object | None = None,
     ) -> QueryGenerationResponse:
         """Minimal happy-path stub that avoids real retrieval or LLM calls.
 
@@ -45,7 +46,7 @@ class StubGenerationOrchestrator:
             generation_latency_ms=4.0,
             answer_processing_latency_ms=0.0,
             total_tokens_used=50,
-            model="gpt-4o",
+            model="gpt-5-nano",
             chunks_retrieved=0,
         )
 
@@ -102,7 +103,7 @@ def test_query_endpoint_uses_generation_metadata(monkeypatch, client) -> None:
 
     assert model.metadata is not None
     assert model.metadata["total_latency_ms"] >= 0.0
-    assert model.metadata["model"] == "gpt-4o"
+    assert model.metadata["model"] == "gpt-5-nano"
 
 
 def test_query_endpoint_llm_error_handling(monkeypatch, client) -> None:

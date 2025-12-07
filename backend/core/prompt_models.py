@@ -23,7 +23,7 @@ class PromptConstructionRequest:
     few_shot_examples: Optional[List[Dict[str, str]]] = None
 
     # Model / generation configuration
-    model: str = "gpt-4o"
+    model: str = "gpt-5-nano"
     max_tokens_for_response: int = 1500
     include_sources: bool = True
 

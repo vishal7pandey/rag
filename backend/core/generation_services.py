@@ -18,6 +18,7 @@ from backend.core.generation_models import (
     QueryGenerationResponse,
     UsedChunk,
 )
+from backend.core.artifact_logger import ArtifactLogger
 from backend.core.guardrails import TimeoutManager
 from backend.core.prompt_models import (
     PromptConstructionResponse,
@@ -283,6 +284,7 @@ class GenerationOrchestrator:
         query_request: QueryGenerationRequest,
         trace_context: Optional[Dict[str, Any]] = None,
         timeout_manager: Optional[TimeoutManager] = None,
+        artifact_logger: Optional[ArtifactLogger] = None,
     ) -> QueryGenerationResponse:
         """Execute the full generation pipeline for a query.
 
@@ -311,6 +313,17 @@ class GenerationOrchestrator:
 
         query_response = await self._query_orchestrator.query(internal_query_request)
 
+        if artifact_logger is not None:
+            metrics_internal_stage1 = query_response.metrics or {}
+            retrieval_latency_stage1 = float(
+                metrics_internal_stage1.get("retrieval_latency_ms", 0.0)
+            )
+            artifact_logger.log_retrieved_chunks_artifact(
+                chunks=query_response.retrieved_chunks,
+                retrieval_latency_ms=retrieval_latency_stage1,
+                trace_context=trace_context,
+            )
+
         # Stage 2: prompt construction via PromptAssembler.
         timeout_manager.assert_time_available(
             min_required_seconds=1.0,
@@ -320,13 +333,23 @@ class GenerationOrchestrator:
         prompt_request = create_prompt_request(
             query_text=query_request.query,
             retrieved_chunks=query_response.retrieved_chunks,
-            model="gpt-4o",
+            model="gpt-5-nano",
             max_tokens_for_response=1500,
             include_sources=query_request.include_sources,
             trace_context=trace_context,
         )
 
         prompt_response = self._prompt_assembler.construct_prompt(prompt_request)
+
+        if artifact_logger is not None:
+            token_breakdown = prompt_response.token_metrics or {}
+            artifact_logger.log_prompt_artifact(
+                system_message=prompt_response.system_message,
+                user_message=prompt_response.user_message,
+                token_breakdown=token_breakdown,
+                citation_map=prompt_response.citation_map,
+                trace_context=trace_context,
+            )
 
         # Stage 3: LLM generation via OpenAIGenerationClient.
         timeout_manager.assert_time_available(
@@ -346,6 +369,23 @@ class GenerationOrchestrator:
         )
 
         answer_text_raw: str = str(generation_result.get("content") or "")
+
+        if artifact_logger is not None:
+            usage_for_answer = generation_result.get("usage") or {}
+            token_usage = {
+                "answer_tokens": int(usage_for_answer.get("completion_tokens", 0)),
+                "prompt_tokens": int(usage_for_answer.get("prompt_tokens", 0)),
+                "total_tokens": int(usage_for_answer.get("total_tokens", 0)),
+            }
+            generation_latency_raw = float(generation_result.get("latency_ms", 0.0))
+            artifact_logger.log_answer_artifact(
+                answer_text=answer_text_raw,
+                raw_llm_output=str(generation_result),
+                generation_latency_ms=generation_latency_raw,
+                model=str(generation_result.get("model") or "unknown"),
+                token_usage=token_usage,
+                trace_context=trace_context,
+            )
 
         # Stage 4: answer post-processing.
         timeout_manager.assert_time_available(
@@ -401,6 +441,15 @@ class GenerationOrchestrator:
             model=str(generation_result.get("model") or "unknown"),
             chunks_retrieved=len(query_response.retrieved_chunks),
         )
+
+        if artifact_logger is not None:
+            artifact_logger.log_response_artifact(
+                answer=answer_text,
+                citations=citations,
+                used_chunks=used_chunks,
+                metadata=metadata,
+                trace_context=trace_context,
+            )
 
         # Currently, warnings from AnswerProcessor are not surfaced separately in
         # QueryGenerationResponse; they can be logged by the caller if needed.

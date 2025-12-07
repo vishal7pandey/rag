@@ -4,7 +4,7 @@ from backend.core.prompt_services import TokenCounter
 
 
 def test_count_tokens_simple() -> None:
-    counter = TokenCounter(model="gpt-4o")
+    counter = TokenCounter(model="gpt-5-nano")
     text = "Hello world"
     tokens = counter.count(text)
 

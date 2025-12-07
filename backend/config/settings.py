@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     # Story 015: global query timeout (seconds) for the RAG pipeline.
     QUERY_TIMEOUT_SECONDS: int = 30
 
+    # Story 016: optional bearer token to secure the debug artifacts endpoint.
+    DEBUG_ARTIFACTS_TOKEN: str = ""
+
     @property
     def openai_config(self) -> OpenAIConfig:
         """Return a validated OpenAIConfig built from the current environment."""

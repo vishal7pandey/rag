@@ -11,7 +11,7 @@ def test_allocate_budget_simple() -> None:
         system_tokens=500,
         query_tokens=100,
         response_budget=1500,
-        model="gpt-4o",
+        model="gpt-5-nano",
     )
 
     assert budget["system_prompt"] == 500
@@ -34,7 +34,7 @@ def test_allocate_with_history_and_examples_reduces_context_budget() -> None:
         system_tokens=500,
         query_tokens=100,
         response_budget=1500,
-        model="gpt-4o",
+        model="gpt-5-nano",
     )
 
     budget = allocator.allocate(
@@ -43,7 +43,7 @@ def test_allocate_with_history_and_examples_reduces_context_budget() -> None:
         history_tokens=1000,
         examples_tokens=500,
         response_budget=1500,
-        model="gpt-4o",
+        model="gpt-5-nano",
     )
 
     assert budget["available_for_context"] < base_budget["available_for_context"]
@@ -61,5 +61,5 @@ def test_allocate_budget_exceeds_context_window_raises() -> None:
             system_tokens=100_000,
             query_tokens=50_000,
             response_budget=50_000,
-            model="gpt-4o",
+            model="gpt-5-nano",
         )

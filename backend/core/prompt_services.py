@@ -18,7 +18,7 @@ class TokenCounter:
     in a model-specific tokenizer dependency.
     """
 
-    def __init__(self, model: str = "gpt-4o") -> None:
+    def __init__(self, model: str = "gpt-5-nano") -> None:
         self._model = model
 
     def count(self, text: str) -> int:
@@ -48,7 +48,7 @@ class TokenBudgetAllocator:
     """
 
     _CONTEXT_WINDOW_BY_MODEL: Dict[str, int] = {
-        "gpt-4o": 128_000,
+        "gpt-5-nano": 128_000,
     }
 
     def _get_context_window_size(self, model: str) -> int:
@@ -62,7 +62,7 @@ class TokenBudgetAllocator:
         history_tokens: int = 0,
         examples_tokens: int = 0,
         response_budget: int = 1500,
-        model: str = "gpt-4o",
+        model: str = "gpt-5-nano",
     ) -> Dict[str, int]:
         """Calculate token budget breakdown for the prompt.
 

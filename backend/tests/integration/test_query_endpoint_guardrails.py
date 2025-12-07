@@ -20,6 +20,7 @@ class SlowTimeoutGenerationOrchestrator:
         query_request: QueryGenerationRequest,
         trace_context: dict | None = None,
         timeout_manager: object | None = None,
+        artifact_logger: object | None = None,
     ) -> QueryGenerationResponse:
         """Simulate a generation path that exceeds the global timeout.
 
@@ -45,7 +46,7 @@ class SlowTimeoutGenerationOrchestrator:
             generation_latency_ms=60.0,
             answer_processing_latency_ms=0.0,
             total_tokens_used=10,
-            model="gpt-4o",
+            model="gpt-5-nano",
             chunks_retrieved=0,
         )
 

@@ -117,6 +117,18 @@ CREATE INDEX IF NOT EXISTS idx_retrieval_logs_query_id ON retrieval_logs (query_
 CREATE INDEX IF NOT EXISTS idx_feedback_chunk_id ON evaluation_feedback (chunk_id);
 CREATE INDEX IF NOT EXISTS idx_feedback_created_at ON evaluation_feedback (created_at);
 
+-- Debug artifacts (Story 016)
+CREATE TABLE IF NOT EXISTS debug_artifacts (
+    id SERIAL PRIMARY KEY,
+    trace_id VARCHAR(100) NOT NULL,
+    artifact_type VARCHAR(50) NOT NULL,
+    artifact_data JSONB NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_debug_artifacts_trace_id_created_at
+    ON debug_artifacts (trace_id, created_at);
+
 -- Trigger function for updated_at columns
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$

@@ -78,7 +78,7 @@ class FastGenerationClient:
     ) -> Dict[str, Any]:  # type: ignore[override]
         return {
             "content": "Based on policy [Source 1], remote work is allowed.",
-            "model": "gpt-4o",
+            "model": "gpt-5-nano",
             "usage": {"prompt_tokens": 50, "completion_tokens": 20, "total_tokens": 70},
             "finish_reason": "stop",
             "latency_ms": 42.0,
@@ -97,7 +97,7 @@ class SlowGenerationClient:
         time.sleep(2.0)
         return {
             "content": "Slow answer [Source 1]",  # Shape compatible with AnswerProcessor
-            "model": "gpt-4o",
+            "model": "gpt-5-nano",
             "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
             "finish_reason": "stop",
             "latency_ms": 2000.0,

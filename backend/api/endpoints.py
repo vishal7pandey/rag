@@ -13,7 +13,7 @@ from os import getenv
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, Request, status
 
 from backend.api.errors import (
     ServiceUnavailableError,
@@ -36,10 +36,16 @@ from backend.api.schemas import (
     UploadedFileInfo,
 )
 from backend.config.settings import settings
+from backend.config.debug_settings import DebugSettings
 from backend.core.generation_models import QueryGenerationRequest
 from backend.core.generation_services import (
     GenerationErrorMapper,
     GenerationOrchestrator,
+)
+from backend.core.artifact_logger import ArtifactLogger
+from backend.core.artifact_storage import (
+    InMemoryArtifactStorage,
+    PostgresArtifactStorage,
 )
 from backend.core.guardrails import InputValidator, TimeoutManager
 from backend.core.exceptions import (
@@ -95,6 +101,18 @@ _QUERY_ORCHESTRATOR = QueryOrchestrator(
 
 # Basic input validator for Story 015 guardrails.
 _INPUT_VALIDATOR = InputValidator()
+
+# Debug configuration and artifact logging components for Story 016.
+_DEBUG_SETTINGS = DebugSettings.from_env()
+if getenv("DATABASE_URL"):
+    try:
+        _ARTIFACT_STORAGE = PostgresArtifactStorage()
+    except Exception:  # pragma: no cover - falls back to in-memory storage
+        _ARTIFACT_STORAGE = InMemoryArtifactStorage()
+else:
+    _ARTIFACT_STORAGE = InMemoryArtifactStorage()
+
+_ARTIFACT_LOGGER = ArtifactLogger(_DEBUG_SETTINGS, _ARTIFACT_STORAGE)
 
 # Optional generation orchestrator (Story 014).
 #
@@ -507,6 +525,15 @@ async def query_endpoint(payload: QueryRequest) -> QueryResponse:
     # Global timeout manager for the full RAG pipeline, configured via settings.
     timeout_manager = TimeoutManager(timeout_seconds=settings.QUERY_TIMEOUT_SECONDS)
 
+    # Debug artifact logging: query-level artifact.
+    if _DEBUG_SETTINGS.enabled:
+        _ARTIFACT_LOGGER.log_query_artifact(
+            query_text=payload.query,
+            top_k=payload.top_k,
+            filters=payload.filters or {},
+            trace_context=trace_ctx,
+        )
+
     logger.info(
         "Query endpoint called",
         extra={"query_preview": payload.query[:100], "top_k": payload.top_k},
@@ -614,6 +641,7 @@ async def query_endpoint(payload: QueryRequest) -> QueryResponse:
             gen_request,
             trace_context=trace_ctx,
             timeout_manager=timeout_manager,
+            artifact_logger=_ARTIFACT_LOGGER if _DEBUG_SETTINGS.enabled else None,
         )
     except EmbeddingProviderError:
         # Embedding provider not configured yet; preserve original stub behavior.
@@ -760,6 +788,34 @@ async def query_endpoint(payload: QueryRequest) -> QueryResponse:
         confidence_score=None,
         metadata=metadata_api,
     )
+
+
+@router.get("/api/debug/artifacts", tags=["Debug"])
+async def debug_artifacts(trace_id: str, request: Request) -> Dict[str, Any]:
+    """Return stored debug artifacts for the given trace_id (Story 016).
+
+    This endpoint is only active when DEBUG_RAG is enabled; otherwise it
+    returns 404 to avoid exposing internals unintentionally.
+    """
+
+    if not _DEBUG_SETTINGS.enabled:
+        raise HTTPException(status_code=404, detail="Debugging disabled")
+
+    # Optional token-based guard for the debug endpoint. When
+    # DEBUG_ARTIFACTS_TOKEN is configured, require an Authorization header
+    # with a matching bearer token. In production, the endpoint is disabled
+    # entirely unless a token is set.
+    expected_token = settings.DEBUG_ARTIFACTS_TOKEN
+    if settings.ENVIRONMENT == "prod" and not expected_token:
+        raise HTTPException(status_code=404, detail="Debugging disabled")
+
+    if expected_token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header != f"Bearer {expected_token}":
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+    artifacts = await _ARTIFACT_STORAGE.get_by_trace_id(trace_id)
+    return {"trace_id": trace_id, "artifacts": artifacts}
 
 
 @router.post("/retrieve", response_model=RetrievalResponse, tags=["Retrieval"])

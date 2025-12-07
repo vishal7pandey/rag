@@ -41,7 +41,12 @@ from backend.core.generation_services import (
     GenerationErrorMapper,
     GenerationOrchestrator,
 )
-from backend.core.exceptions import FileValidationError, RateLimitError
+from backend.core.guardrails import InputValidator, TimeoutManager
+from backend.core.exceptions import (
+    FileValidationError,
+    QueryTimeoutError,
+    RateLimitError,
+)
 from backend.core.file_validator import FileValidator
 from backend.core.embedding_provider import EmbeddingProviderError
 from backend.core.ingestion_orchestrator import IngestionOrchestrator
@@ -87,6 +92,9 @@ _QUERY_ORCHESTRATOR = QueryOrchestrator(
     retriever_service=_RETRIEVER_SERVICE,
     embedding_cache=_QUERY_EMBEDDING_CACHE,
 )
+
+# Basic input validator for Story 015 guardrails.
+_INPUT_VALIDATOR = InputValidator()
 
 # Optional generation orchestrator (Story 014).
 #
@@ -489,6 +497,16 @@ async def query_endpoint(payload: QueryRequest) -> QueryResponse:
 
     trace_ctx = get_trace_context()
 
+    # Basic input validation before running the RAG pipeline.
+    _INPUT_VALIDATOR.validate_request(
+        query=payload.query,
+        top_k=payload.top_k,
+        trace_context=trace_ctx,
+    )
+
+    # Global timeout manager for the full RAG pipeline, configured via settings.
+    timeout_manager = TimeoutManager(timeout_seconds=settings.QUERY_TIMEOUT_SECONDS)
+
     logger.info(
         "Query endpoint called",
         extra={"query_preview": payload.query[:100], "top_k": payload.top_k},
@@ -595,6 +613,7 @@ async def query_endpoint(payload: QueryRequest) -> QueryResponse:
         gen_response = await _GENERATION_ORCHESTRATOR.generate_answer(
             gen_request,
             trace_context=trace_ctx,
+            timeout_manager=timeout_manager,
         )
     except EmbeddingProviderError:
         # Embedding provider not configured yet; preserve original stub behavior.
@@ -609,6 +628,11 @@ async def query_endpoint(payload: QueryRequest) -> QueryResponse:
             confidence_score=None,
             metadata=None,
         )
+    except QueryTimeoutError as exc:
+        # Let the global error handler convert this to a 408 response with the
+        # standardized error envelope, instead of remapping via
+        # GenerationErrorMapper.
+        raise exc
     except Exception as exc:  # noqa: BLE001
         status_code, error_type, message = _GENERATION_ERROR_MAPPER.map_error(exc)
         raise HTTPException(

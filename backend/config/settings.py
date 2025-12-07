@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     OPENAI_TEMPERATURE: float = 0.3
     OPENAI_MAX_OUTPUT_TOKENS: int = 1000
 
+    # Story 015: global query timeout (seconds) for the RAG pipeline.
+    QUERY_TIMEOUT_SECONDS: int = 30
+
     @property
     def openai_config(self) -> OpenAIConfig:
         """Return a validated OpenAIConfig built from the current environment."""

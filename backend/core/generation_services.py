@@ -18,6 +18,7 @@ from backend.core.generation_models import (
     QueryGenerationResponse,
     UsedChunk,
 )
+from backend.core.guardrails import TimeoutManager
 from backend.core.prompt_models import (
     PromptConstructionResponse,
     create_prompt_request,
@@ -281,6 +282,7 @@ class GenerationOrchestrator:
         self,
         query_request: QueryGenerationRequest,
         trace_context: Optional[Dict[str, Any]] = None,
+        timeout_manager: Optional[TimeoutManager] = None,
     ) -> QueryGenerationResponse:
         """Execute the full generation pipeline for a query.
 
@@ -289,11 +291,15 @@ class GenerationOrchestrator:
         mapping them to HTTP responses using the existing error handler and the
         GenerationErrorMapper when appropriate.
         """
-
         trace_context = trace_context or {}
-        start_total = time.time()
+        timeout_manager = timeout_manager or TimeoutManager()
 
         # Stage 1: retrieval via QueryOrchestrator.
+        timeout_manager.assert_time_available(
+            min_required_seconds=1.0,
+            stage_name="stage_1_retrieval",
+            stages_completed=0,
+        )
         internal_query_request = create_query_request(
             query_text=query_request.query,
             top_k=query_request.top_k,
@@ -306,6 +312,11 @@ class GenerationOrchestrator:
         query_response = await self._query_orchestrator.query(internal_query_request)
 
         # Stage 2: prompt construction via PromptAssembler.
+        timeout_manager.assert_time_available(
+            min_required_seconds=1.0,
+            stage_name="stage_2_prompt_construction",
+            stages_completed=1,
+        )
         prompt_request = create_prompt_request(
             query_text=query_request.query,
             retrieved_chunks=query_response.retrieved_chunks,
@@ -318,6 +329,11 @@ class GenerationOrchestrator:
         prompt_response = self._prompt_assembler.construct_prompt(prompt_request)
 
         # Stage 3: LLM generation via OpenAIGenerationClient.
+        timeout_manager.assert_time_available(
+            min_required_seconds=1.0,
+            stage_name="stage_3_generation",
+            stages_completed=2,
+        )
         messages: List[Dict[str, str]] = [
             {"role": "system", "content": prompt_response.system_message},
             {"role": "user", "content": prompt_response.user_message},
@@ -332,6 +348,12 @@ class GenerationOrchestrator:
         answer_text_raw: str = str(generation_result.get("content") or "")
 
         # Stage 4: answer post-processing.
+        timeout_manager.assert_time_available(
+            min_required_seconds=1.0,
+            stage_name="stage_4_answer_processing",
+            stages_completed=3,
+        )
+        start_answer_processing = time.time()
         (
             answer_text,
             citations,
@@ -344,6 +366,7 @@ class GenerationOrchestrator:
             prompt_response=prompt_response,
             trace_context=trace_context,
         )
+        answer_processing_latency_ms = (time.time() - start_answer_processing) * 1000.0
 
         # Metrics aggregation.
         metrics_internal = query_response.metrics
@@ -352,7 +375,17 @@ class GenerationOrchestrator:
         retrieval_latency_ms = float(metrics_internal.get("retrieval_latency_ms", 0.0))
         prompt_assembly_latency_ms = float(prompt_response.assembly_latency_ms)
         generation_latency_ms = float(generation_result.get("latency_ms", 0.0))
-        total_latency_ms = (time.time() - start_total) * 1000.0
+        # Log per-stage timings using the timeout manager helper.
+        stage_1_latency = embedding_latency_ms + retrieval_latency_ms
+        timeout_manager.log_stage_timing("stage_1_retrieval", stage_1_latency)
+        timeout_manager.log_stage_timing(
+            "stage_2_prompt_construction", prompt_assembly_latency_ms
+        )
+        timeout_manager.log_stage_timing("stage_3_generation", generation_latency_ms)
+        timeout_manager.log_stage_timing(
+            "stage_4_answer_processing", answer_processing_latency_ms
+        )
+        total_latency_ms = timeout_manager.get_elapsed_ms()
 
         usage = generation_result.get("usage") or {}
         total_tokens_used = int(usage.get("total_tokens", 0))
@@ -363,6 +396,7 @@ class GenerationOrchestrator:
             retrieval_latency_ms=retrieval_latency_ms,
             prompt_assembly_latency_ms=prompt_assembly_latency_ms,
             generation_latency_ms=generation_latency_ms,
+            answer_processing_latency_ms=answer_processing_latency_ms,
             total_tokens_used=total_tokens_used,
             model=str(generation_result.get("model") or "unknown"),
             chunks_retrieved=len(query_response.retrieved_chunks),

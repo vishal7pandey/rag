@@ -18,6 +18,7 @@ class FailingGenerationOrchestrator:
         self,
         query_request: QueryGenerationRequest,
         trace_context: dict | None = None,
+        timeout_manager: object | None = None,
     ) -> QueryGenerationResponse:  # pragma: no cover - behavior tested via API
         raise RateLimitError("Too many requests", retry_after_seconds=10)
 
@@ -27,6 +28,7 @@ class StubGenerationOrchestrator:
         self,
         query_request: QueryGenerationRequest,
         trace_context: dict | None = None,
+        timeout_manager: object | None = None,
     ) -> QueryGenerationResponse:
         """Minimal happy-path stub that avoids real retrieval or LLM calls.
 
@@ -41,6 +43,7 @@ class StubGenerationOrchestrator:
             retrieval_latency_ms=3.0,
             prompt_assembly_latency_ms=1.0,
             generation_latency_ms=4.0,
+            answer_processing_latency_ms=0.0,
             total_tokens_used=50,
             model="gpt-4o",
             chunks_retrieved=0,

@@ -47,6 +47,7 @@ class QueryGenerationMetadata:
     retrieval_latency_ms: float
     prompt_assembly_latency_ms: float
     generation_latency_ms: float
+    answer_processing_latency_ms: float
     total_tokens_used: int
     model: str
     chunks_retrieved: int

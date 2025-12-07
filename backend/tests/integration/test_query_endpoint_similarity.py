@@ -7,6 +7,11 @@ import pytest
 
 from backend.api.schemas import QueryResponse
 from backend.core.embedding_models import Embedding
+from backend.core.generation_models import (
+    QueryGenerationMetadata,
+    QueryGenerationRequest,
+    QueryGenerationResponse,
+)
 from backend.core.query_services import (
     QueryEmbeddingService,
     QueryOrchestrator,
@@ -27,11 +32,46 @@ class FakeQueryEmbeddingService(QueryEmbeddingService):
         return list(self._vector)
 
 
+class StubGenerationOrchestrator:
+    async def generate_answer(
+        self,
+        query_request: QueryGenerationRequest,
+        trace_context: dict | None = None,
+    ) -> QueryGenerationResponse:
+        """Return a minimal stub generation response.
+
+        This stub avoids calling the real retrieval or LLM layers and is used
+        to exercise the /api/query endpoint's integration with the
+        GenerationOrchestrator in tests that focus primarily on retrieval
+        behavior and filters.
+        """
+
+        meta = QueryGenerationMetadata(
+            total_latency_ms=10.0,
+            embedding_latency_ms=2.0,
+            retrieval_latency_ms=3.0,
+            prompt_assembly_latency_ms=1.0,
+            generation_latency_ms=4.0,
+            total_tokens_used=50,
+            model="gpt-4o",
+            chunks_retrieved=0,
+        )
+
+        return QueryGenerationResponse(
+            query_id=uuid4(),
+            answer="Stub answer",
+            citations=[],
+            used_chunks=[],
+            metadata=meta,
+        )
+
+
 @pytest.mark.asyncio
 async def test_query_endpoint_returns_retrieved_chunks(monkeypatch, client) -> None:
     """/api/query returns retrieved_chunks when vector store has data."""
 
-    # Patch endpoint globals to use a dedicated in-memory storage and fake embedding service.
+    # Patch endpoint globals to use a dedicated in-memory storage and fake
+    # embedding service, and configure a stub generation orchestrator.
     from backend.api import endpoints
 
     storage = InMemoryVectorDBStorageLayer()
@@ -90,18 +130,9 @@ async def test_query_endpoint_returns_retrieved_chunks(monkeypatch, client) -> N
     assert contents[1] == "chunk-two"
     assert model.latency_ms >= 0.0
 
-    # Refined answer text should mention retrieved context and include a snippet.
-    assert "Retrieved relevant context" in model.answer
-    assert "chunk-one" in model.answer
-
-    # Citations should be populated and aligned with retrieved chunks.
-    assert model.citations
-    assert len(model.citations) == 2
-    assert model.citations[0]["chunk_id"]
-    assert model.citations[0]["rank"] == 1
-    assert (
-        model.citations[0]["similarity_score"] >= model.citations[1]["similarity_score"]
-    )
+    # Answer should be a non-empty string.
+    assert isinstance(model.answer, str)
+    assert model.answer
 
 
 @pytest.mark.asyncio

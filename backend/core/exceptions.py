@@ -82,8 +82,70 @@ class ServiceUnavailableError(RAGException):
         super().__init__(message, status_code=503)
 
 
+class QueryTimeoutError(ServiceUnavailableError):
+    """HTTP 408 – Query exceeded global timeout.
+
+    Used by Story 015 to signal that the end-to-end query execution exceeded
+    the configured timeout. This is a specialized subtype of
+    ServiceUnavailableError so it participates in the same error-handling
+    flow while carrying additional timeout metadata.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        timeout_seconds: int,
+        elapsed_ms: float,
+        stages_completed: int = 0,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        self.timeout_seconds = timeout_seconds
+        self.elapsed_ms = elapsed_ms
+        self.stages_completed = stages_completed
+        extra_details: Dict[str, Any] = {
+            "timeout_seconds": timeout_seconds,
+            "elapsed_ms": elapsed_ms,
+            "stages_completed": stages_completed,
+        }
+        if details:
+            extra_details.update(details)
+
+        # Bypass ServiceUnavailableError.__init__ so we can use 408 instead of 503.
+        RAGException.__init__(
+            self,
+            message,
+            status_code=408,
+            error_code="timeout",
+            details=extra_details,
+        )
+
+
 class ValidationError(BadRequestError):
-    """Validation failed."""
+    """HTTP 422 – Input validation failed.
+
+    Story 015 uses this for query-level validation errors (e.g. empty query,
+    query too long, invalid top_k). It carries the name of the field that
+    failed validation in addition to a human-readable message.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        validation_field: str = "",
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        extra_details: Dict[str, Any] = {"field": validation_field}
+        if details:
+            extra_details.update(details)
+        RAGException.__init__(
+            self,
+            message,
+            status_code=422,
+            error_code="validation",
+            details=extra_details,
+        )
 
 
 class ResourceExistsError(ConflictError):

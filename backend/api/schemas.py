@@ -152,10 +152,33 @@ class QueryResponse(BaseModel):
 
     query_id: UUID
     answer: str
-    citations: List[Dict[str, Any]] = Field(default_factory=list)
+    citations: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "List of citation entries for the answer. Each entry typically "
+            "includes source_index, chunk_id, document_id, source_file, page, "
+            "similarity_score, and a preview snippet."
+        ),
+    )
+    # Backward-compatible field exposing the raw retrieved chunks. This is
+    # primarily used by integration tests and debugging tools.
     retrieved_chunks: Optional[List[Chunk]] = None
+    # New field aligning with Story 014: compact view of chunks actually used
+    # in the prompt context for answer generation.
+    used_chunks: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "Chunks that were used in the prompt context. Each entry typically "
+            "includes chunk_id, rank, similarity_score, and content_preview."
+        ),
+    )
+    # High-level latency (kept for backward compatibility); mirrors
+    # metadata.total_latency_ms when metadata is present.
     latency_ms: float = Field(ge=0)
     confidence_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    # Additional generation metadata aligned with QueryGenerationMetadata
+    # (latency breakdown, token usage, model, chunks_retrieved, etc.).
+    metadata: Optional[Dict[str, Any]] = None
 
 
 # ============================================================================

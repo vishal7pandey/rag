@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from os import getenv
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
@@ -35,6 +36,11 @@ from backend.api.schemas import (
     UploadedFileInfo,
 )
 from backend.config.settings import settings
+from backend.core.generation_models import QueryGenerationRequest
+from backend.core.generation_services import (
+    GenerationErrorMapper,
+    GenerationOrchestrator,
+)
 from backend.core.exceptions import FileValidationError, RateLimitError
 from backend.core.file_validator import FileValidator
 from backend.core.embedding_provider import EmbeddingProviderError
@@ -81,6 +87,21 @@ _QUERY_ORCHESTRATOR = QueryOrchestrator(
     retriever_service=_RETRIEVER_SERVICE,
     embedding_cache=_QUERY_EMBEDDING_CACHE,
 )
+
+# Optional generation orchestrator (Story 014).
+#
+# In production, when OPENAI_API_KEY is configured, we initialize a real
+# GenerationOrchestrator that wires together QueryOrchestrator, PromptAssembler,
+# and OpenAIGenerationClient. Tests and non-configured environments can still
+# override or disable this by monkeypatching _GENERATION_ORCHESTRATOR.
+_GENERATION_ERROR_MAPPER = GenerationErrorMapper()
+_GENERATION_ORCHESTRATOR: Optional[GenerationOrchestrator]
+if getenv("OPENAI_API_KEY"):
+    _GENERATION_ORCHESTRATOR = GenerationOrchestrator(
+        query_orchestrator=_QUERY_ORCHESTRATOR
+    )
+else:  # pragma: no cover - exercised indirectly via tests
+    _GENERATION_ORCHESTRATOR = None
 
 
 def _evaluate_dependencies() -> Dict[str, str]:
@@ -473,7 +494,131 @@ async def query_endpoint(payload: QueryRequest) -> QueryResponse:
         extra={"query_preview": payload.query[:100], "top_k": payload.top_k},
     )
 
-    # Build internal query request model.
+    # If no generation orchestrator is configured, reuse the original
+    # retrieval-only implementation: run the query orchestrator, build
+    # retrieved_chunks and citations, and return a snippet-based answer.
+    if _GENERATION_ORCHESTRATOR is None:
+        internal_request = create_query_request(
+            query_text=payload.query,
+            top_k=payload.top_k,
+            search_type="dense",
+            filters=payload.filters or {},
+            include_metadata=payload.include_sources,
+            trace_context=trace_ctx,
+        )
+
+        try:
+            internal_response = await _QUERY_ORCHESTRATOR.query(internal_request)
+        except EmbeddingProviderError:
+            answer = "I have no documents in my knowledge base yet. Please upload documents first."
+            return QueryResponse(
+                query_id=uuid4(),
+                answer=answer,
+                citations=[],
+                retrieved_chunks=[],
+                used_chunks=[],
+                latency_ms=50.0,
+                confidence_score=None,
+                metadata=None,
+            )
+
+        include_sources = payload.include_sources
+        retrieved_chunks_api: List[Chunk] = []
+        citations: List[Dict[str, Any]] = []
+
+        for rc in internal_response.retrieved_chunks:
+            if rc.document_id is None:
+                continue
+
+            metadata = rc.metadata if include_sources else {}
+
+            retrieved_chunks_api.append(
+                Chunk(
+                    id=rc.chunk_id,
+                    document_id=rc.document_id,
+                    chunk_index=max(rc.rank - 1, 0),
+                    content=rc.content,
+                    dense_embedding=rc.embedding or [],
+                    sparse_embedding={},
+                    metadata=metadata,
+                    quality_score=rc.quality_score,
+                    embedding_model=rc.embedding_model or "text-embedding-3-small",
+                    created_at=rc.created_at or datetime.now(timezone.utc),
+                    updated_at=rc.updated_at or datetime.now(timezone.utc),
+                )
+            )
+
+            if include_sources:
+                citations.append(
+                    {
+                        "chunk_id": str(rc.chunk_id),
+                        "document_id": str(rc.document_id),
+                        "rank": rc.rank,
+                        "similarity_score": rc.similarity_score,
+                        "source": rc.metadata.get("source"),
+                        "metadata": rc.metadata,
+                    }
+                )
+
+        if not retrieved_chunks_api:
+            answer = "I have no documents in my knowledge base yet. Please upload documents first."
+            citations = []
+        else:
+            top_snippet = retrieved_chunks_api[0].content.strip().replace("\n", " ")
+            if len(top_snippet) > 200:
+                top_snippet = top_snippet[:197] + "..."
+            answer = (
+                "Retrieved relevant context for your query from the knowledge base. "
+                "Here is a representative snippet: " + top_snippet
+            )
+
+        return QueryResponse(
+            query_id=internal_response.query_id,
+            answer=answer,
+            citations=citations,
+            retrieved_chunks=retrieved_chunks_api,
+            used_chunks=[],
+            latency_ms=internal_response.total_latency_ms,
+            confidence_score=None,
+            metadata=None,
+        )
+
+    # Stage 1: run the generation orchestrator (embed → retrieve → prompt → generate → answer).
+    gen_request = QueryGenerationRequest(
+        query=payload.query,
+        top_k=payload.top_k,
+        filters=payload.filters or {},
+        include_sources=payload.include_sources,
+    )
+
+    try:
+        gen_response = await _GENERATION_ORCHESTRATOR.generate_answer(
+            gen_request,
+            trace_context=trace_ctx,
+        )
+    except EmbeddingProviderError:
+        # Embedding provider not configured yet; preserve original stub behavior.
+        answer = "I have no documents in my knowledge base yet. Please upload documents first."
+        return QueryResponse(
+            query_id=uuid4(),
+            answer=answer,
+            citations=[],
+            retrieved_chunks=[],
+            used_chunks=[],
+            latency_ms=50.0,
+            confidence_score=None,
+            metadata=None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        status_code, error_type, message = _GENERATION_ERROR_MAPPER.map_error(exc)
+        raise HTTPException(
+            status_code=status_code,
+            detail={"error": {"type": error_type, "message": message}},
+        ) from exc
+
+    # Stage 2: run the retrieval orchestrator to build the retrieved_chunks view
+    # exposed by the public API. This reuses the same query params and respects
+    # filters and include_sources.
     internal_request = create_query_request(
         query_text=payload.query,
         top_k=payload.top_k,
@@ -486,21 +631,21 @@ async def query_endpoint(payload: QueryRequest) -> QueryResponse:
     try:
         internal_response = await _QUERY_ORCHESTRATOR.query(internal_request)
     except EmbeddingProviderError:
-        # Embedding provider not configured yet; preserve original stub behavior.
+        # If retrieval fails here, fall back to the same stub behavior.
         answer = "I have no documents in my knowledge base yet. Please upload documents first."
         return QueryResponse(
             query_id=uuid4(),
             answer=answer,
             citations=[],
             retrieved_chunks=[],
+            used_chunks=[],
             latency_ms=50.0,
             confidence_score=None,
+            metadata=None,
         )
 
-    # Map internal retrieved chunks to API Chunk models and build citations.
     include_sources = payload.include_sources
     retrieved_chunks_api: List[Chunk] = []
-    citations: List[Dict[str, Any]] = []
 
     for rc in internal_response.retrieved_chunks:
         if rc.document_id is None:
@@ -524,37 +669,72 @@ async def query_endpoint(payload: QueryRequest) -> QueryResponse:
             )
         )
 
-        if include_sources:
-            citations.append(
-                {
-                    "chunk_id": str(rc.chunk_id),
-                    "document_id": str(rc.document_id),
-                    "rank": rc.rank,
-                    "similarity_score": rc.similarity_score,
-                    "source": rc.metadata.get("source"),
-                    "metadata": rc.metadata,
-                }
-            )
+    # Build citations and used_chunks from the generation response. These are
+    # aligned with the prompt-level citation map produced by Story 013.
+    citations_api: List[Dict[str, Any]] = []
+    used_chunks_api: List[Dict[str, Any]] = []
 
-    if not retrieved_chunks_api:
-        answer = "I have no documents in my knowledge base yet. Please upload documents first."
-        citations = []
-    else:
-        top_snippet = retrieved_chunks_api[0].content.strip().replace("\n", " ")
-        if len(top_snippet) > 200:
-            top_snippet = top_snippet[:197] + "..."
-        answer = (
-            "Retrieved relevant context for your query from the knowledge base. "
-            "Here is a representative snippet: " + top_snippet
+    for entry in gen_response.citations:
+        citations_api.append(
+            {
+                "source_index": entry.source_index,
+                "chunk_id": str(entry.chunk_id),
+                "document_id": str(entry.document_id) if entry.document_id else None,
+                "source_file": entry.source_file,
+                "page": entry.page,
+                "similarity_score": entry.similarity_score,
+                "preview": entry.preview,
+            }
         )
 
+    for uc in gen_response.used_chunks:
+        used_chunks_api.append(
+            {
+                "chunk_id": str(uc.chunk_id),
+                "rank": uc.rank,
+                "similarity_score": uc.similarity_score,
+                "content_preview": uc.content_preview,
+            }
+        )
+
+    # Build metadata payload from the generation metadata.
+    meta = gen_response.metadata
+    metadata_api: Dict[str, Any] = {
+        "total_latency_ms": meta.total_latency_ms,
+        "embedding_latency_ms": meta.embedding_latency_ms,
+        "retrieval_latency_ms": meta.retrieval_latency_ms,
+        "prompt_assembly_latency_ms": meta.prompt_assembly_latency_ms,
+        "generation_latency_ms": meta.generation_latency_ms,
+        "total_tokens_used": meta.total_tokens_used,
+        "model": meta.model,
+        "chunks_retrieved": meta.chunks_retrieved,
+    }
+
+    # When no documents are available even though generation succeeded, return
+    # the same friendly stubbed answer for consistency with earlier stories.
+    if not retrieved_chunks_api:
+        answer = "I have no documents in my knowledge base yet. Please upload documents first."
+        citations_api = []
+        used_chunks_api = []
+    else:
+        answer = gen_response.answer
+
+    # Respect include_sources=False semantics: hide metadata and citations from
+    # the response, but still return an answer.
+    if not include_sources:
+        for chunk in retrieved_chunks_api:
+            chunk.metadata = {}
+        citations_api = []
+
     return QueryResponse(
-        query_id=internal_response.query_id,
+        query_id=gen_response.query_id,
         answer=answer,
-        citations=citations,
+        citations=citations_api,
         retrieved_chunks=retrieved_chunks_api,
-        latency_ms=internal_response.total_latency_ms,
+        used_chunks=used_chunks_api,
+        latency_ms=float(metadata_api["total_latency_ms"]),
         confidence_score=None,
+        metadata=metadata_api,
     )
 
 

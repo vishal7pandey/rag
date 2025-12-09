@@ -1,0 +1,120 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.errorSection {
+  background: rgba(255, 84, 89, 0.08);
+  border: 1px solid rgba(255, 84, 89, 0.2);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+}
+
+.errorHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.errorIcon {
+  font-size: 18px;
+}
+
+.errorTitle {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-error);
+  margin: 0;
+}
+
+.errorList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: rgba(255, 84, 89, 0.9);
+}
+
+.errorList li {
+  padding: var(--space-2) 0;
+  line-height: 1.5;
+}
+
+.errorList strong {
+  color: var(--color-error);
+}
+
+.listSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.actionsRow {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.cancelButton {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: var(--color-text-secondary);
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-standard);
+}
+
+.cancelButton:hover {
+  border-color: rgba(255, 255, 255, 0.4);
+  color: var(--color-text-primary);
+}
+
+.listHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-3) 0;
+}
+
+.listTitle {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+.clearButton {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: var(--color-text-secondary);
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-standard);
+}
+
+.clearButton:hover:not(:disabled) {
+  border-color: rgba(255, 84, 89, 0.5);
+  color: var(--color-error);
+}
+
+.clearButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.emptyState {
+  text-align: center;
+  padding: var(--space-6);
+  color: var(--color-text-secondary);
+}
+
+.emptyText {
+  font-size: var(--font-size-sm);
+  margin: 0;
+}

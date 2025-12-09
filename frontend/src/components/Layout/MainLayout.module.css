@@ -1,0 +1,26 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--color-bg-primary);
+}
+
+.main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.content {
+  flex: 1;
+  padding: var(--space-6);
+  overflow-y: auto;
+  margin-left: 240px;
+}
+
+@media (max-width: 768px) {
+  .content {
+    margin-left: 0;
+    padding: var(--space-4);
+  }
+}

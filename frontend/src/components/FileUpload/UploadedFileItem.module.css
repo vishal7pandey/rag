@@ -1,0 +1,119 @@
+.row {
+  display: grid;
+  grid-template-columns: 1fr 80px 120px 100px 40px;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  align-items: center;
+  transition: background var(--duration-fast) var(--ease-standard);
+}
+
+.row:last-child {
+  border-bottom: none;
+}
+
+.row:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.colName {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.filename {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.icon {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.name {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.colSize,
+.colTime,
+.colStatus {
+  text-align: right;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.colActions {
+  text-align: center;
+}
+
+.removeButton {
+  background: transparent;
+  border: none;
+  font-size: 24px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  transition: all var(--duration-fast) var(--ease-standard);
+  opacity: 0;
+}
+
+.row:hover .removeButton {
+  opacity: 1;
+}
+
+.removeButton:hover:not(:disabled) {
+  color: var(--color-error);
+  background: rgba(255, 84, 89, 0.1);
+}
+
+.removeButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.retryButton {
+  margin-left: var(--space-2);
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: var(--color-text-secondary);
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-standard);
+}
+
+.retryButton:hover {
+  border-color: rgba(6, 182, 212, 0.5);
+  color: var(--color-info);
+}
+
+@media (max-width: 768px) {
+  .row {
+    grid-template-columns: 1fr 60px 40px;
+  }
+
+  .colTime,
+  .colStatus {
+    display: none;
+  }
+
+  .removeButton {
+    opacity: 1;
+  }
+}

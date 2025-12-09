@@ -2,10 +2,10 @@ import React from 'react';
 
 const Query: React.FC = () => {
   return (
-    <main>
-      <h1>Query</h1>
+    <section aria-labelledby="query-heading">
+      <h2 id="query-heading">Query</h2>
       <p>Ask questions against the indexed knowledge base.</p>
-    </main>
+    </section>
   );
 };
 

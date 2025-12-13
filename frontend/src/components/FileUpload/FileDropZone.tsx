@@ -101,7 +101,6 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
       <div className={styles.content}>
         <div className={styles.icon}>📁</div>
         <h3 className={styles.label}>Drop files here or click to browse</h3>
-        <p className={styles.helper}>Supported: PDF, TXT, Markdown (max 100 MB per file)</p>
       </div>
 
       <input

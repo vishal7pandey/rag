@@ -5,8 +5,8 @@ import styles from './Sidebar.module.css';
 interface SidebarProps {
   isOpen: boolean;
   onClose: () => void;
-  activeTab: 'ingestion' | 'query' | 'settings';
-  onTabChange: (tab: 'ingestion' | 'query' | 'settings') => void;
+  activeTab: 'ingestion' | 'query' | 'insights';
+  onTabChange: (tab: 'ingestion' | 'query' | 'insights') => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -16,9 +16,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onTabChange,
 }) => {
   const tabs = [
-    { id: 'ingestion', label: 'Ingestion', icon: '📄' },
-    { id: 'query', label: 'Query', icon: '❓' },
-    { id: 'settings', label: 'Settings', icon: '⚙️' },
+    { id: 'ingestion', label: 'Documents', icon: '📄' },
+    { id: 'query', label: 'Chat', icon: '💬' },
+    { id: 'insights', label: 'Insights', icon: '📊' },
   ] as const;
 
   const handleTabClick = (tab: (typeof tabs)[number]['id']) => {

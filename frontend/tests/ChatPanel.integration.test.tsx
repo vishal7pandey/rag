@@ -43,6 +43,7 @@ vi.mock('@/services/queryService', async () => {
             tokenCount: 10,
             responseTimeMs: 500,
             retrievedChunks: 1,
+            traceId: 'trace-123',
           },
         }),
       ),
@@ -82,6 +83,11 @@ describe('ChatPanel integration', () => {
       expect(panel).toBeTruthy();
       expect(within(panel).getByText(/^sources$/i)).toBeTruthy();
       expect(within(panel).getByText(/q3 revenue reached/i)).toBeTruthy();
+    });
+
+    // Feedback panel appears
+    await waitFor(() => {
+      expect(screen.getByText(/was this helpful\?/i)).toBeTruthy();
     });
   });
 });

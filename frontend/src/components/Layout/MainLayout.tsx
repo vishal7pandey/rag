@@ -5,8 +5,8 @@ import { Sidebar } from './Sidebar';
 import styles from './MainLayout.module.css';
 
 interface MainLayoutProps {
-  activeTab: 'ingestion' | 'query' | 'settings';
-  onTabChange: (tab: 'ingestion' | 'query' | 'settings') => void;
+  activeTab: 'ingestion' | 'query' | 'insights';
+  onTabChange: (tab: 'ingestion' | 'query' | 'insights') => void;
   children: React.ReactNode;
 }
 

@@ -7,11 +7,13 @@ import styles from './ChatHistory.module.css';
 
 interface ChatHistoryProps {
   messages: ChatMessageType[];
+  conversationId: string;
   onCitationClick?: (citationId: number) => void;
 }
 
 export const ChatHistory: React.FC<ChatHistoryProps> = ({
   messages,
+  conversationId,
   onCitationClick,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -25,11 +27,7 @@ export const ChatHistory: React.FC<ChatHistoryProps> = ({
   if (messages.length === 0) {
     return (
       <div className={styles.emptyState}>
-        <div className={styles.icon}>💬</div>
-        <h2 className={styles.title}>Start a conversation</h2>
-        <p className={styles.description}>
-          Ask questions about your uploaded documents.
-        </p>
+        <p className={styles.inlineHint}>Ask questions about your documents</p>
       </div>
     );
   }
@@ -40,6 +38,7 @@ export const ChatHistory: React.FC<ChatHistoryProps> = ({
         <ChatMessage
           key={message.id}
           message={message}
+          conversationId={conversationId}
           onCitationClick={onCitationClick}
         />
       ))}

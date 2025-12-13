@@ -8,9 +8,13 @@ import styles from './ChatMessage.module.css';
 
 interface ChatMessageProps {
   message: ChatMessageType;
+  onCitationClick?: (citationId: number) => void;
 }
 
-export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
+export const ChatMessage: React.FC<ChatMessageProps> = ({
+  message,
+  onCitationClick,
+}) => {
   const formatTime = (date: Date) =>
     date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
@@ -40,7 +44,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
             )}
 
             {message.citations && message.citations.length > 0 && (
-              <CitationArea citations={message.citations} />
+              <CitationArea citations={message.citations} onCitationClick={onCitationClick} />
             )}
 
             {message.metadata && (

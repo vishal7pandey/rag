@@ -8,9 +8,13 @@ import styles from './CitationArea.module.css';
 
 interface CitationAreaProps {
   citations: Citation[];
+  onCitationClick?: (citationId: number) => void;
 }
 
-export const CitationArea: React.FC<CitationAreaProps> = ({ citations }) => {
+export const CitationArea: React.FC<CitationAreaProps> = ({
+  citations,
+  onCitationClick,
+}) => {
   const [selectedCitation, setSelectedCitation] = useState<Citation | null>(
     null,
   );
@@ -26,13 +30,20 @@ export const CitationArea: React.FC<CitationAreaProps> = ({ citations }) => {
             <CitationBadge
               key={citation.id}
               citation={citation}
-              onClick={() => setSelectedCitation(citation)}
+              onClick={() => {
+                if (onCitationClick) {
+                  onCitationClick(citation.id);
+                  return;
+                }
+
+                setSelectedCitation(citation);
+              }}
             />
           ))}
         </div>
       </div>
 
-      {selectedCitation && (
+      {selectedCitation && !onCitationClick && (
         <CitationModal
           citation={selectedCitation}
           onClose={() => setSelectedCitation(null)}

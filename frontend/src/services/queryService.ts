@@ -1,4 +1,11 @@
-import { QueryRequest, QueryResponse, SSEChunk, ChatMessage } from '@/types/query';
+import {
+  QueryRequest,
+  QueryResponse,
+  SSEChunk,
+  ChatMessage,
+  UsedChunk,
+  Citation,
+} from '@/types/query';
 
 export class QueryError extends Error {
   constructor(
@@ -18,6 +25,59 @@ export class QueryService {
       import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api',
   ) {
     this.apiBaseUrl = apiBaseUrl;
+  }
+
+  private normalizeCitations(raw: any[]): Citation[] {
+    return (raw ?? []).map((c: any, idx: number) => {
+      const chunkId = c?.chunk_id ?? c?.chunkId;
+      const docId = c?.document_id ?? c?.documentId ?? c?.source?.document_id;
+      const name =
+        c?.source_file ?? c?.sourceFile ?? c?.documentName ?? c?.source ?? 'Source';
+      const passage = c?.preview ?? c?.passage ?? '';
+      const score = c?.similarity_score ?? c?.similarityScore;
+      const page = c?.page;
+      const sourceIndex = c?.source_index ?? c?.sourceIndex ?? c?.rank;
+
+      return {
+        id: typeof c?.id === 'number' ? (c.id as number) : idx + 1,
+        documentId: docId ? String(docId) : String(idx + 1),
+        documentName: String(name),
+        passage: String(passage),
+        chunkId: chunkId ? String(chunkId) : undefined,
+        sourceIndex:
+          typeof sourceIndex === 'number' ? (sourceIndex as number) : undefined,
+        page: typeof page === 'number' ? (page as number) : undefined,
+        relevanceScore:
+          typeof score === 'number' ? (score as number) : undefined,
+      };
+    });
+  }
+
+  private normalizeUsedChunks(raw: any[]): UsedChunk[] {
+    return (raw ?? []).map((uc: any) => {
+      const chunkId = uc?.chunk_id ?? uc?.chunkId;
+      const rank = uc?.rank;
+      const similarityScore = uc?.similarity_score ?? uc?.similarityScore;
+      const contentPreview = uc?.content_preview ?? uc?.contentPreview ?? '';
+      const documentId = uc?.document_id ?? uc?.documentId;
+      const sourceFile = uc?.source_file ?? uc?.sourceFile;
+      const page = uc?.page;
+      const fullContent = uc?.full_content ?? uc?.fullContent;
+      const uploadedAt = uc?.uploaded_at ?? uc?.uploadedAt;
+
+      return {
+        chunkId: String(chunkId ?? ''),
+        rank: typeof rank === 'number' ? (rank as number) : 0,
+        similarityScore:
+          typeof similarityScore === 'number' ? (similarityScore as number) : 0,
+        contentPreview: String(contentPreview),
+        documentId: documentId ? String(documentId) : undefined,
+        sourceFile: sourceFile ? String(sourceFile) : undefined,
+        page: typeof page === 'number' ? (page as number) : undefined,
+        fullContent: fullContent ? String(fullContent) : undefined,
+        uploadedAt: uploadedAt ? String(uploadedAt) : undefined,
+      };
+    });
   }
 
   async *streamQuery(
@@ -48,21 +108,14 @@ export class QueryService {
         const answer: string = String(data?.answer ?? '');
         const citations = Array.isArray(data?.citations) ? data.citations : [];
 
-        const mappedCitations = citations.map((c: any, idx: number) => {
-          const docId = c?.document_id ?? c?.documentId ?? c?.source?.document_id;
-          const name = c?.source_file ?? c?.sourceFile ?? c?.source ?? 'Source';
-          const passage = c?.preview ?? c?.passage ?? '';
-          const score = c?.similarity_score ?? c?.similarityScore;
+        const usedChunks = Array.isArray(data?.used_chunks)
+          ? data.used_chunks
+          : Array.isArray(data?.usedChunks)
+            ? data.usedChunks
+            : [];
 
-          return {
-            id: idx + 1,
-            documentId: docId ? String(docId) : String(idx + 1),
-            documentName: String(name),
-            passage: String(passage),
-            relevanceScore:
-              typeof score === 'number' ? (score as number) : undefined,
-          };
-        });
+        const mappedCitations = this.normalizeCitations(citations);
+        const mappedUsedChunks = this.normalizeUsedChunks(usedChunks);
 
         const latencyMs =
           typeof data?.latency_ms === 'number' ? (data.latency_ms as number) : 0;
@@ -85,6 +138,7 @@ export class QueryService {
         const endChunk: SSEChunk = {
           type: 'end',
           citations: mappedCitations,
+          usedChunks: mappedUsedChunks,
           metadata: {
             tokenCount: totalTokens ?? 0,
             responseTimeMs: Math.round(latencyMs),
@@ -164,6 +218,7 @@ export class QueryService {
     const messageId = Math.random().toString(36).slice(2);
     let fullAnswer = '';
     let citations: QueryResponse['citations'] = [];
+    let usedChunks: UsedChunk[] = [];
     let metadata: QueryResponse['metadata'] | undefined;
     let hasError = false;
     let errorMessage = '';
@@ -174,7 +229,8 @@ export class QueryService {
           fullAnswer += chunk.content;
           onChunk?.(chunk.content);
         } else if (chunk.type === 'end') {
-          citations = chunk.citations ?? [];
+          citations = this.normalizeCitations(chunk.citations ?? []);
+          usedChunks = this.normalizeUsedChunks(chunk.usedChunks ?? []);
           metadata = chunk.metadata;
         } else if (chunk.type === 'error') {
           hasError = true;
@@ -193,6 +249,7 @@ export class QueryService {
         role: 'assistant',
         content: fullAnswer,
         citations,
+        usedChunks,
         timestamp: now,
         metadata,
       };

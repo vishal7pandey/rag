@@ -121,6 +121,7 @@ export const useQuery = () => {
                 ...msg,
                 content: response.content,
                 citations: response.citations,
+                usedChunks: response.usedChunks,
                 metadata: response.metadata,
                 isStreaming: false,
               }

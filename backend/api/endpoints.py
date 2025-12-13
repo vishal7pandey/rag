@@ -559,12 +559,13 @@ async def query_endpoint(payload: QueryRequest, request: Request) -> QueryRespon
                 metadata_out = {
                     "tokenCount": 0,
                     "responseTimeMs": elapsed_ms,
-                    "retrievedChunks": len(citations_out),
+                    "retrievedChunks": len(response.used_chunks or []),
                 }
 
                 end_payload = {
                     "type": "end",
-                    "citations": citations_out,
+                    "citations": response.citations,
+                    "usedChunks": response.used_chunks,
                     "metadata": metadata_out,
                 }
                 yield f"data: {json.dumps(end_payload)}\n\n"
@@ -644,6 +645,7 @@ async def _query_json(payload: QueryRequest) -> QueryResponse:
         include_sources = payload.include_sources
         retrieved_chunks_api: List[Chunk] = []
         citations: List[Dict[str, Any]] = []
+        used_chunks_api: List[Dict[str, Any]] = []
 
         for rc in internal_response.retrieved_chunks:
             if rc.document_id is None:
@@ -682,6 +684,24 @@ async def _query_json(payload: QueryRequest) -> QueryResponse:
                     }
                 )
 
+            if include_sources:
+                # Story 020: provide a compact used_chunks view even in retrieval-only mode
+                # so the Sources panel can render.
+                used_chunks_api.append(
+                    {
+                        "chunk_id": str(rc.chunk_id),
+                        "rank": rc.rank,
+                        "similarity_score": rc.similarity_score,
+                        "content_preview": rc.content[:200],
+                        "document_id": str(rc.document_id),
+                        "source_file": rc.metadata.get("source_file")
+                        or rc.metadata.get("source"),
+                        "page": rc.metadata.get("page"),
+                        "full_content": rc.content,
+                        "uploaded_at": rc.metadata.get("uploaded_at"),
+                    }
+                )
+
         if not retrieved_chunks_api:
             answer = "I have no documents in my knowledge base yet. Please upload documents first."
             citations = []
@@ -699,7 +719,7 @@ async def _query_json(payload: QueryRequest) -> QueryResponse:
             answer=answer,
             citations=citations,
             retrieved_chunks=retrieved_chunks_api,
-            used_chunks=[],
+            used_chunks=used_chunks_api,
             latency_ms=internal_response.total_latency_ms,
             confidence_score=None,
             metadata=None,

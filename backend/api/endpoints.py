@@ -8,12 +8,14 @@ later stories.
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timezone
 from os import getenv
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, Request, status
+from fastapi.responses import StreamingResponse
 
 from backend.api.errors import (
     ServiceUnavailableError,
@@ -184,6 +186,12 @@ async def health_check() -> HealthResponse:
 
 @router.post(
     "/api/ingest/upload",
+    response_model=IngestionResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    tags=["Ingestion"],
+)
+@router.post(
+    "/api/ingestion/upload",
     response_model=IngestionResponse,
     status_code=status.HTTP_202_ACCEPTED,
     tags=["Ingestion"],
@@ -503,7 +511,73 @@ async def ingest_status_orchestrated(ingestion_id: UUID) -> IngestionResponse:
 
 
 @router.post("/api/query", response_model=QueryResponse, tags=["Query"])
-async def query_endpoint(payload: QueryRequest) -> QueryResponse:
+async def query_endpoint(payload: QueryRequest, request: Request) -> QueryResponse:
+    accept_header = request.headers.get("accept", "")
+    if "text/event-stream" in accept_header:
+
+        async def event_stream():
+            start_time = time.time()
+            conversation_id = str(uuid4())
+            message_id = str(uuid4())
+
+            yield f"data: {json.dumps({'type': 'start', 'conversationId': conversation_id, 'messageId': message_id})}\n\n"
+
+            try:
+                response = await _query_json(payload)
+
+                for token in response.answer.split(" "):
+                    if not token:
+                        continue
+                    chunk_payload = {"type": "chunk", "content": token + " "}
+                    yield f"data: {json.dumps(chunk_payload)}\n\n"
+
+                citations_out: List[Dict[str, Any]] = []
+                for idx, entry in enumerate(response.citations[:5], start=1):
+                    document_id = entry.get("document_id") or entry.get("documentId")
+                    source_name = (
+                        entry.get("source_file")
+                        or entry.get("sourceFile")
+                        or entry.get("source")
+                        or "Source"
+                    )
+                    passage = entry.get("preview") or entry.get("passage") or ""
+                    score = entry.get("similarity_score") or entry.get(
+                        "similarityScore"
+                    )
+
+                    citations_out.append(
+                        {
+                            "id": idx,
+                            "documentId": str(document_id) if document_id else str(idx),
+                            "documentName": str(source_name),
+                            "passage": str(passage),
+                            "relevanceScore": score,
+                        }
+                    )
+
+                elapsed_ms = int((time.time() - start_time) * 1000)
+                metadata_out = {
+                    "tokenCount": 0,
+                    "responseTimeMs": elapsed_ms,
+                    "retrievedChunks": len(citations_out),
+                }
+
+                end_payload = {
+                    "type": "end",
+                    "citations": citations_out,
+                    "metadata": metadata_out,
+                }
+                yield f"data: {json.dumps(end_payload)}\n\n"
+            except Exception as exc:  # noqa: BLE001
+                error_payload = {"type": "error", "error": str(exc)}
+                yield f"data: {json.dumps(error_payload)}\n\n"
+
+        return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+    return await _query_json(payload)
+
+
+async def _query_json(payload: QueryRequest) -> QueryResponse:
     """Execute dense similarity search for a query.
 
     This implementation wires the core query orchestrator (Story 011) into the
@@ -601,6 +675,9 @@ async def query_endpoint(payload: QueryRequest) -> QueryResponse:
                         "rank": rc.rank,
                         "similarity_score": rc.similarity_score,
                         "source": rc.metadata.get("source"),
+                        "source_file": rc.metadata.get("source_file")
+                        or rc.metadata.get("source"),
+                        "preview": rc.content[:200],
                         "metadata": rc.metadata,
                     }
                 )

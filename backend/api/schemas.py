@@ -146,6 +146,10 @@ class QueryRequest(BaseModel):
     filters: Optional[Dict[str, Any]] = None
     include_sources: bool = Field(default=True)
 
+    model_config = {
+        "extra": "ignore",
+    }
+
 
 class QueryResponse(BaseModel):
     """Response body for POST /api/query."""

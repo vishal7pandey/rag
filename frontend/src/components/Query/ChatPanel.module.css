@@ -1,0 +1,62 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--color-bg-primary);
+}
+
+.errorBanner {
+  padding: var(--space-3) var(--space-4);
+  background: rgba(255, 84, 89, 0.1);
+  border-bottom: 1px solid rgba(255, 84, 89, 0.2);
+  color: var(--color-error);
+  font-size: var(--font-size-sm);
+  animation: slideIn 300ms var(--ease-standard);
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateY(-100%);
+  }
+
+  to {
+    transform: translateY(0);
+  }
+}
+
+.inputRow {
+  padding: var(--space-4);
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+
+.clearButton {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: var(--color-text-secondary);
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-standard);
+  flex-shrink: 0;
+}
+
+.clearButton:hover {
+  border-color: var(--color-error);
+  color: var(--color-error);
+}
+
+@media (max-width: 768px) {
+  .inputRow {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .clearButton {
+    align-self: flex-end;
+  }
+}

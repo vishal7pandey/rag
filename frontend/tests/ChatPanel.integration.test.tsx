@@ -1,6 +1,6 @@
 import React from 'react';
 
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -26,6 +26,16 @@ vi.mock('@/services/queryService', async () => {
               documentId: 'doc-1',
               documentName: 'Report.pdf',
               passage: 'Sample text',
+              chunkId: 'chunk-1',
+              sourceIndex: 1,
+            },
+          ],
+          usedChunks: [
+            {
+              chunkId: 'chunk-1',
+              rank: 1,
+              similarityScore: 0.95,
+              contentPreview: 'Q3 revenue reached $5.2M...'
             },
           ],
           timestamp: new Date(),
@@ -61,6 +71,17 @@ describe('ChatPanel integration', () => {
     // Citation badge appears
     await waitFor(() => {
       expect(screen.getByText('[1]')).toBeTruthy();
+    });
+
+    // Sources panel appears
+    await waitFor(() => {
+      const panel = screen.getByRole('complementary', {
+        name: /^sources panel$/i,
+      });
+
+      expect(panel).toBeTruthy();
+      expect(within(panel).getByText(/^sources$/i)).toBeTruthy();
+      expect(within(panel).getByText(/q3 revenue reached/i)).toBeTruthy();
     });
   });
 });

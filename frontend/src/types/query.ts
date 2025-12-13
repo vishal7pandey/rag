@@ -3,6 +3,9 @@ export interface Citation {
   documentId: string;
   documentName: string;
   passage: string;
+  chunkId?: string;
+  sourceIndex?: number;
+  page?: number;
   startChar?: number;
   relevanceScore?: number;
   source?: {
@@ -11,11 +14,24 @@ export interface Citation {
   };
 }
 
+export interface UsedChunk {
+  chunkId: string;
+  rank: number;
+  similarityScore: number;
+  contentPreview: string;
+  documentId?: string;
+  sourceFile?: string;
+  page?: number;
+  fullContent?: string;
+  uploadedAt?: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   citations?: Citation[];
+  usedChunks?: UsedChunk[];
   timestamp: Date;
   isStreaming?: boolean;
   error?: string;
@@ -53,6 +69,7 @@ export interface SSEChunk {
   conversationId?: string;
   messageId?: string;
   citations?: Citation[];
+  usedChunks?: UsedChunk[];
   metadata?: QueryResponse['metadata'];
   error?: string;
 }

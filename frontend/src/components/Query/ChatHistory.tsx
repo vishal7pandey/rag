@@ -7,9 +7,13 @@ import styles from './ChatHistory.module.css';
 
 interface ChatHistoryProps {
   messages: ChatMessageType[];
+  onCitationClick?: (citationId: number) => void;
 }
 
-export const ChatHistory: React.FC<ChatHistoryProps> = ({ messages }) => {
+export const ChatHistory: React.FC<ChatHistoryProps> = ({
+  messages,
+  onCitationClick,
+}) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -33,7 +37,11 @@ export const ChatHistory: React.FC<ChatHistoryProps> = ({ messages }) => {
   return (
     <div className={styles.container} ref={containerRef}>
       {messages.map((message) => (
-        <ChatMessage key={message.id} message={message} />
+        <ChatMessage
+          key={message.id}
+          message={message}
+          onCitationClick={onCitationClick}
+        />
       ))}
     </div>
   );

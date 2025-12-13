@@ -17,6 +17,11 @@
 
 .tabContent {
   animation: fadeIn var(--duration-fast) var(--ease-standard);
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
 }
 
 .placeholder {

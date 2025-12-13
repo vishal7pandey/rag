@@ -17,11 +17,15 @@
     "react-dom": "^18.2.0",
     "react-query": "^3.39.3",
     "react-router-dom": "^6.20.0",
-    "axios": "^1.6.0"
+    "axios": "^1.6.0",
+    "dompurify": "^3.0.0",
+    "markdown-it": "^14.0.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
+    "@types/dompurify": "^3.0.0",
+    "@types/markdown-it": "^14.0.0",
     "@typescript-eslint/eslint-plugin": "^6.13.0",
     "@typescript-eslint/parser": "^6.13.0",
     "@vitejs/plugin-react": "^4.2.0",

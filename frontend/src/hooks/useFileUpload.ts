@@ -119,18 +119,45 @@ export const useFileUpload = () => {
         );
       }, controller.signal);
 
-      const uploadedFiles = response.files.map((backendFile, index) => {
-        const base = newFiles[index] ?? newFiles[newFiles.length - 1];
+      const respAny = response as any;
 
-        return {
-          ...base,
-          status: backendFile.status === 'success' ? 'success' : 'error',
-          progress: 100,
-          documentId: backendFile.documentId,
-          ingestionId: response.ingestionId,
-          errorMessage: backendFile.message,
-        } satisfies UploadedFile;
-      });
+      // Backend currently returns IngestionResponse (snake_case) while the
+      // frontend types were originally defined for a camelCase UploadResponse.
+      // Support both shapes to avoid UI showing "Failed" on successful 202.
+      const isIngestionResponse =
+        respAny && typeof respAny === 'object' && 'ingestion_id' in respAny;
+
+      const uploadedFiles = isIngestionResponse
+        ? newFiles.map((base) => {
+            const ingestionStatus = String(respAny.status ?? '').toLowerCase();
+            const normalizedStatus: UploadedFile['status'] =
+              ingestionStatus === 'completed'
+                ? 'success'
+                : ingestionStatus === 'failed'
+                  ? 'error'
+                  : 'processing';
+
+            return {
+              ...base,
+              status: normalizedStatus,
+              progress: 100,
+              documentId: respAny.document_id ? String(respAny.document_id) : undefined,
+              ingestionId: respAny.ingestion_id ? String(respAny.ingestion_id) : undefined,
+              errorMessage: respAny.error_message ? String(respAny.error_message) : undefined,
+            } satisfies UploadedFile;
+          })
+        : response.files.map((backendFile, index) => {
+            const base = newFiles[index] ?? newFiles[newFiles.length - 1];
+
+            return {
+              ...base,
+              status: backendFile.status === 'success' ? 'success' : 'error',
+              progress: 100,
+              documentId: backendFile.documentId,
+              ingestionId: response.ingestionId,
+              errorMessage: backendFile.message,
+            } satisfies UploadedFile;
+          });
 
       setFiles((prev) =>
         prev.map((file) => {
@@ -224,19 +251,48 @@ export const useFileUpload = () => {
         controller.signal,
       );
 
-      const backendFile = response.files[0];
+      const respAny = response as any;
+      const isIngestionResponse =
+        respAny && typeof respAny === 'object' && 'ingestion_id' in respAny;
+
+      const backendFile = isIngestionResponse ? undefined : response.files[0];
+
+      const ingestionStatus = isIngestionResponse
+        ? String(respAny.status ?? '').toLowerCase()
+        : undefined;
+
+      const normalizedStatus: UploadedFile['status'] = isIngestionResponse
+        ? ingestionStatus === 'completed'
+          ? 'success'
+          : ingestionStatus === 'failed'
+            ? 'error'
+            : 'processing'
+        : backendFile?.status === 'success'
+          ? 'success'
+          : 'error';
 
       setFiles((prev) =>
         prev.map((file) =>
           file.id === fileId
             ? {
                 ...file,
-                status:
-                  backendFile.status === 'success' ? 'success' : 'error',
+                status: normalizedStatus,
                 progress: 100,
-                documentId: backendFile.documentId,
-                ingestionId: response.ingestionId,
-                errorMessage: backendFile.message,
+                documentId: isIngestionResponse
+                  ? respAny.document_id
+                    ? String(respAny.document_id)
+                    : undefined
+                  : backendFile?.documentId,
+                ingestionId: isIngestionResponse
+                  ? respAny.ingestion_id
+                    ? String(respAny.ingestion_id)
+                    : undefined
+                  : response.ingestionId,
+                errorMessage: isIngestionResponse
+                  ? respAny.error_message
+                    ? String(respAny.error_message)
+                    : undefined
+                  : backendFile?.message,
               }
             : file,
         ),

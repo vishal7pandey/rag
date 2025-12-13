@@ -3,17 +3,21 @@ import React, { useState } from 'react';
 import { MainLayout } from './components/Layout/MainLayout';
 import { TabNavigation } from './components/Navigation/TabNavigation';
 import Ingestion from './pages/Ingestion';
+import Insights from './pages/Insights';
 import Query from './pages/Query';
 import './styles/globals.css';
 
 import styles from './App.module.css';
 
 export const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'ingestion' | 'query'>('query');
+  const [activeTab, setActiveTab] = useState<'ingestion' | 'query' | 'insights'>(
+    'query',
+  );
 
   const contentTabs = [
-    { id: 'ingestion', label: 'Ingestion', icon: '📄' },
-    { id: 'query', label: 'Query', icon: '❓' },
+    { id: 'ingestion', label: 'Documents', icon: '📄' },
+    { id: 'query', label: 'Chat', icon: '💬' },
+    { id: 'insights', label: 'Insights', icon: '📊' },
   ];
 
   const renderTabContent = () => {
@@ -22,6 +26,12 @@ export const App: React.FC = () => {
         return (
           <div className={styles.tabContent}>
             <Ingestion />
+          </div>
+        );
+      case 'insights':
+        return (
+          <div className={styles.tabContent}>
+            <Insights />
           </div>
         );
       case 'query':
@@ -37,25 +47,14 @@ export const App: React.FC = () => {
   return (
     <MainLayout
       activeTab={activeTab}
-      // Sidebar has a Settings tab, but the main content currently only
-      // differentiates between ingestion and query per Story 017.
-      onTabChange={(tab) => setActiveTab(tab as 'ingestion' | 'query')}
+      onTabChange={setActiveTab}
     >
-      <div className={styles.pageHeader}>
-        <h1 className={styles.pageTitle}>
-          {activeTab === 'ingestion' ? 'Document Ingestion' : 'Ask Questions'}
-        </h1>
-        <p className={styles.pageDescription}>
-          {activeTab === 'ingestion'
-            ? 'Upload and process your documents'
-            : 'Query your documents with AI'}
-        </p>
-      </div>
-
       <TabNavigation
         tabs={contentTabs}
         activeTab={activeTab}
-        onTabChange={(tabId) => setActiveTab(tabId as 'ingestion' | 'query')}
+        onTabChange={(tabId) =>
+          setActiveTab(tabId as 'ingestion' | 'query' | 'insights')
+        }
       />
 
       {renderTabContent()}

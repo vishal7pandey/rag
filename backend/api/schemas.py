@@ -230,3 +230,39 @@ class RetrievalResponse(BaseModel):
     query_text: str
     retrieved_chunks: List[RetrievalChunk] = Field(default_factory=list)
     metrics: RetrievalMetrics
+
+
+class FeedbackRequest(BaseModel):
+    """Request body for POST /api/feedback."""
+
+    conversationId: str = Field(..., min_length=1, max_length=200)
+    messageId: str = Field(..., min_length=1, max_length=200)
+    traceId: str = Field(..., min_length=1, max_length=200)
+    thumbsUp: Optional[bool] = None
+    rating: Optional[int] = Field(default=None, ge=1, le=5)
+    comment: Optional[str] = Field(default=None, max_length=500)
+    categories: Optional[List[str]] = Field(default=None)
+
+
+class FeedbackResponse(BaseModel):
+    """Response body for POST /api/feedback."""
+
+    id: str
+    status: str = Field(default="received")
+    createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class EvaluationMetricResponse(BaseModel):
+    """Response body for POST /api/evaluate/{trace_id}."""
+
+    id: str
+    traceId: str
+    feedbackId: str
+    faithfulness: float
+    relevance: float
+    completeness: float
+    citationAccuracy: float
+    overallScore: float
+    userFeedback: Optional[bool] = None
+    userRating: Optional[int] = None
+    createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

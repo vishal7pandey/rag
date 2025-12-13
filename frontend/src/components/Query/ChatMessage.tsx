@@ -3,16 +3,19 @@ import React from 'react';
 import { ChatMessage as ChatMessageType } from '@/types/query';
 
 import { CitationArea } from './CitationArea';
+import { FeedbackPanel } from './FeedbackPanel';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import styles from './ChatMessage.module.css';
 
 interface ChatMessageProps {
   message: ChatMessageType;
+  conversationId: string;
   onCitationClick?: (citationId: number) => void;
 }
 
 export const ChatMessage: React.FC<ChatMessageProps> = ({
   message,
+  conversationId,
   onCitationClick,
 }) => {
   const formatTime = (date: Date) =>
@@ -61,6 +64,17 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
                 )}
               </div>
             )}
+
+            {message.isStreaming !== true &&
+              message.error == null &&
+              typeof message.metadata?.traceId === 'string' &&
+              message.metadata.traceId.length > 0 && (
+                <FeedbackPanel
+                  conversationId={conversationId}
+                  messageId={message.id}
+                  traceId={message.metadata.traceId}
+                />
+              )}
           </>
         )}
       </div>

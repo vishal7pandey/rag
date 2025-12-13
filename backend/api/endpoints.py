@@ -9,13 +9,23 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from os import getenv
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, Request, status
+from fastapi import (
+    APIRouter,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+    Request,
+    status,
+    Query,
+)
 from fastapi.responses import StreamingResponse
+from sqlalchemy import text
 
 from backend.api.errors import (
     ServiceUnavailableError,
@@ -24,11 +34,14 @@ from backend.api.errors import (
 from backend.api.schemas import (
     Chunk,
     DocumentMetadata,
+    FeedbackRequest,
+    FeedbackResponse,
     HealthResponse,
     HealthStatus,
     IngestionConfig,
     IngestionResponse,
     IngestionStatus,
+    EvaluationMetricResponse,
     QueryRequest,
     QueryResponse,
     RetrievalChunk,
@@ -69,6 +82,8 @@ from backend.core.query_services import (
 from backend.core.rate_limiter import RateLimiter
 from backend.core.vector_storage import InMemoryVectorDBStorageLayer
 from backend.core.logging import get_logger
+from backend.data_layer.postgres_client import PostgresClient
+from backend.evaluation.quality_evaluator import QualityEvaluator
 
 
 router = APIRouter()
@@ -113,6 +128,16 @@ if getenv("DATABASE_URL"):
         _ARTIFACT_STORAGE = InMemoryArtifactStorage()
 else:
     _ARTIFACT_STORAGE = InMemoryArtifactStorage()
+
+
+_POSTGRES_CLIENT: PostgresClient | None
+if getenv("DATABASE_URL"):
+    try:
+        _POSTGRES_CLIENT = PostgresClient()
+    except Exception:
+        _POSTGRES_CLIENT = None
+else:
+    _POSTGRES_CLIENT = None
 
 _ARTIFACT_LOGGER = ArtifactLogger(_DEBUG_SETTINGS, _ARTIFACT_STORAGE)
 
@@ -576,6 +601,373 @@ async def query_endpoint(payload: QueryRequest, request: Request) -> QueryRespon
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 
     return await _query_json(payload)
+
+
+@router.post("/api/feedback", response_model=FeedbackResponse, tags=["Feedback"])
+async def feedback_endpoint(payload: FeedbackRequest) -> FeedbackResponse:
+    feedback_id = str(uuid4())
+
+    created_at = datetime.now(timezone.utc)
+
+    if _POSTGRES_CLIENT is not None:
+        try:
+            with _POSTGRES_CLIENT.engine.begin() as conn:
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO user_feedback (
+                            id,
+                            trace_id,
+                            conversation_id,
+                            message_id,
+                            thumbs_up,
+                            rating,
+                            comment,
+                            categories,
+                            created_at
+                        ) VALUES (
+                            :id,
+                            :trace_id,
+                            :conversation_id,
+                            :message_id,
+                            :thumbs_up,
+                            :rating,
+                            :comment,
+                            CAST(:categories AS JSONB),
+                            :created_at
+                        )
+                        """
+                    ),
+                    {
+                        "id": feedback_id,
+                        "trace_id": payload.traceId,
+                        "conversation_id": payload.conversationId,
+                        "message_id": payload.messageId,
+                        "thumbs_up": payload.thumbsUp,
+                        "rating": payload.rating,
+                        "comment": payload.comment,
+                        "categories": json.dumps(payload.categories or []),
+                        "created_at": created_at,
+                    },
+                )
+        except Exception:
+            pass
+
+    data = payload.model_dump()
+    data["id"] = feedback_id
+    data["createdAt"] = created_at.isoformat().replace("+00:00", "Z")
+
+    await _ARTIFACT_STORAGE.store(
+        trace_id=payload.traceId,
+        artifact_type="user_feedback",
+        artifact_data=data,
+    )
+
+    try:
+        await _evaluate_trace(
+            trace_id=payload.traceId,
+            feedback_id=feedback_id,
+            thumbs_up=payload.thumbsUp,
+            rating=payload.rating,
+        )
+    except Exception:
+        pass
+
+    return FeedbackResponse(id=feedback_id, status="received", createdAt=created_at)
+
+
+async def _evaluate_trace(
+    *,
+    trace_id: str,
+    feedback_id: str,
+    thumbs_up: Optional[bool],
+    rating: Optional[int],
+) -> Dict[str, Any]:
+    artifacts = await _ARTIFACT_STORAGE.get_by_trace_id(trace_id)
+    evaluator = QualityEvaluator()
+    metric = evaluator.evaluate(
+        trace_id=trace_id,
+        feedback_id=feedback_id,
+        artifacts=artifacts,
+        user_feedback=thumbs_up,
+        user_rating=rating,
+    )
+
+    metric_id = str(uuid4())
+    created_at = datetime.now(timezone.utc)
+
+    record: Dict[str, Any] = {
+        "id": metric_id,
+        "traceId": trace_id,
+        "feedbackId": feedback_id,
+        "faithfulness": metric.faithfulness,
+        "relevance": metric.relevance,
+        "completeness": metric.completeness,
+        "citationAccuracy": metric.citation_accuracy,
+        "overallScore": metric.overall_score,
+        "documents": metric.document_refs or [],
+        "userFeedback": thumbs_up,
+        "userRating": rating,
+        "createdAt": created_at.isoformat().replace("+00:00", "Z"),
+    }
+
+    if _POSTGRES_CLIENT is not None:
+        try:
+            with _POSTGRES_CLIENT.engine.begin() as conn:
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO evaluation_metrics (
+                            id,
+                            trace_id,
+                            feedback_id,
+                            faithfulness,
+                            relevance,
+                            completeness,
+                            citation_accuracy,
+                            overall_score,
+                            documents,
+                            user_feedback,
+                            user_rating,
+                            created_at
+                        ) VALUES (
+                            :id,
+                            :trace_id,
+                            :feedback_id,
+                            :faithfulness,
+                            :relevance,
+                            :completeness,
+                            :citation_accuracy,
+                            :overall_score,
+                            CAST(:documents AS JSONB),
+                            :user_feedback,
+                            :user_rating,
+                            :created_at
+                        )
+                        """
+                    ),
+                    {
+                        "id": metric_id,
+                        "trace_id": trace_id,
+                        "feedback_id": feedback_id,
+                        "faithfulness": metric.faithfulness,
+                        "relevance": metric.relevance,
+                        "completeness": metric.completeness,
+                        "citation_accuracy": metric.citation_accuracy,
+                        "overall_score": metric.overall_score,
+                        "documents": json.dumps(metric.document_refs or []),
+                        "user_feedback": thumbs_up,
+                        "user_rating": rating,
+                        "created_at": created_at,
+                    },
+                )
+        except Exception:
+            pass
+
+    await _ARTIFACT_STORAGE.store(
+        trace_id=trace_id,
+        artifact_type="evaluation_metric",
+        artifact_data=record,
+    )
+
+    return record
+
+
+@router.post(
+    "/api/evaluate/{trace_id}",
+    response_model=EvaluationMetricResponse,
+    tags=["Evaluation"],
+)
+async def evaluate_endpoint(trace_id: str) -> EvaluationMetricResponse:
+    feedback_id = str(uuid4())
+    record = await _evaluate_trace(
+        trace_id=trace_id,
+        feedback_id=feedback_id,
+        thumbs_up=None,
+        rating=None,
+    )
+
+    return EvaluationMetricResponse(
+        id=record["id"],
+        traceId=record["traceId"],
+        feedbackId=record["feedbackId"],
+        faithfulness=record["faithfulness"],
+        relevance=record["relevance"],
+        completeness=record["completeness"],
+        citationAccuracy=record["citationAccuracy"],
+        overallScore=record["overallScore"],
+        userFeedback=record.get("userFeedback"),
+        userRating=record.get("userRating"),
+        createdAt=datetime.fromisoformat(record["createdAt"].replace("Z", "+00:00")),
+    )
+
+
+@router.get("/api/insights", tags=["Insights"])
+async def insights_endpoint(
+    time_range: str = Query(default="7d", pattern=r"^(1d|7d|30d|all)$"),
+) -> Dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    if time_range == "1d":
+        window_days = 1
+    elif time_range == "7d":
+        window_days = 7
+    elif time_range == "30d":
+        window_days = 30
+    else:
+        window_days = 0
+
+    since = now - timedelta(days=window_days) if window_days else None
+
+    helpful_count = 0
+    not_helpful_count = 0
+    category_counts: Dict[str, int] = {}
+    metrics: List[Dict[str, Any]] = []
+    doc_stats: Dict[str, Dict[str, Any]] = {}
+
+    if _POSTGRES_CLIENT is not None:
+        with _POSTGRES_CLIENT.engine.connect() as conn:
+            if since is not None:
+                feedback_rows = conn.execute(
+                    text(
+                        """
+                        SELECT thumbs_up, categories
+                        FROM user_feedback
+                        WHERE created_at >= :since
+                        """
+                    ),
+                    {"since": since},
+                ).fetchall()
+            else:
+                feedback_rows = conn.execute(
+                    text(
+                        """
+                        SELECT thumbs_up, categories
+                        FROM user_feedback
+                        """
+                    )
+                ).fetchall()
+
+            for row in feedback_rows:
+                if row.thumbs_up is True:
+                    helpful_count += 1
+                elif row.thumbs_up is False:
+                    not_helpful_count += 1
+
+                try:
+                    cats = row.categories or []
+                except Exception:
+                    cats = []
+                for cat in cats:
+                    if not isinstance(cat, str):
+                        continue
+                    category_counts[cat] = category_counts.get(cat, 0) + 1
+
+            if since is not None:
+                metric_rows = conn.execute(
+                    text(
+                        """
+                        SELECT overall_score, citation_accuracy, documents
+                        FROM evaluation_metrics
+                        WHERE created_at >= :since
+                        """
+                    ),
+                    {"since": since},
+                ).fetchall()
+            else:
+                metric_rows = conn.execute(
+                    text(
+                        """
+                        SELECT overall_score, citation_accuracy, documents
+                        FROM evaluation_metrics
+                        """
+                    )
+                ).fetchall()
+
+            metrics = [
+                {
+                    "overall_score": float(r.overall_score or 0.0),
+                    "citation_accuracy": float(r.citation_accuracy or 0.0),
+                }
+                for r in metric_rows
+            ]
+
+            for r in metric_rows:
+                overall = float(r.overall_score or 0.0)
+                docs = r.documents or []
+                for d in docs:
+                    if not isinstance(d, dict):
+                        continue
+                    doc_id = str(d.get("documentId") or "")
+                    filename = str(d.get("filename") or "")
+                    key = doc_id or filename
+                    if not key:
+                        continue
+                    slot = doc_stats.get(key)
+                    if slot is None:
+                        slot = {
+                            "documentId": doc_id,
+                            "filename": filename,
+                            "citationCount": 0,
+                            "scoreTotal": 0.0,
+                        }
+                        doc_stats[key] = slot
+                    slot["citationCount"] += 1
+                    slot["scoreTotal"] += overall
+
+    total_feedback = helpful_count + not_helpful_count
+    percent_helpful = (helpful_count / float(total_feedback)) if total_feedback else 0.0
+
+    avg_quality = (
+        sum(m["overall_score"] for m in metrics) / float(len(metrics))
+        if metrics
+        else 0.0
+    )
+    avg_citation_accuracy = (
+        sum(m["citation_accuracy"] for m in metrics) / float(len(metrics))
+        if metrics
+        else 0.0
+    )
+
+    if window_days:
+        avg_per_day = total_feedback / float(window_days)
+    else:
+        avg_per_day = float(total_feedback)
+
+    top_documents = sorted(
+        doc_stats.values(),
+        key=lambda d: int(d.get("citationCount") or 0),
+        reverse=True,
+    )[:10]
+
+    top_documents_out = [
+        {
+            "documentId": d.get("documentId") or "",
+            "filename": d.get("filename") or "",
+            "citationCount": int(d.get("citationCount") or 0),
+            "avgQualityScore": (
+                float(d.get("scoreTotal") or 0.0)
+                / float(int(d.get("citationCount") or 1))
+            ),
+        }
+        for d in top_documents
+    ]
+
+    return {
+        "queryVolume": {
+            "total": total_feedback,
+            "avgPerDay": avg_per_day,
+            "changePercent": 0.0,
+        },
+        "satisfactionRate": {
+            "helpfulCount": helpful_count,
+            "notHelpfulCount": not_helpful_count,
+            "percent": percent_helpful,
+        },
+        "avgQualityScore": avg_quality,
+        "topDocuments": top_documents_out,
+        "citationAccuracy": avg_citation_accuracy,
+        "errorPatterns": category_counts,
+    }
 
 
 async def _query_json(payload: QueryRequest) -> QueryResponse:

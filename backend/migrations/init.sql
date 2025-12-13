@@ -129,6 +129,42 @@ CREATE TABLE IF NOT EXISTS debug_artifacts (
 CREATE INDEX IF NOT EXISTS idx_debug_artifacts_trace_id_created_at
     ON debug_artifacts (trace_id, created_at);
 
+CREATE TABLE IF NOT EXISTS user_feedback (
+    id VARCHAR(100) PRIMARY KEY,
+    trace_id VARCHAR(100) NOT NULL,
+    conversation_id VARCHAR(200) NOT NULL,
+    message_id VARCHAR(200) NOT NULL,
+    thumbs_up BOOLEAN,
+    rating INTEGER,
+    comment TEXT,
+    categories JSONB DEFAULT '[]'::jsonb,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_feedback_trace_id_created_at
+    ON user_feedback (trace_id, created_at);
+
+CREATE TABLE IF NOT EXISTS evaluation_metrics (
+    id VARCHAR(100) PRIMARY KEY,
+    trace_id VARCHAR(100) NOT NULL,
+    feedback_id VARCHAR(100) NOT NULL,
+    faithfulness DOUBLE PRECISION NOT NULL,
+    relevance DOUBLE PRECISION NOT NULL,
+    completeness DOUBLE PRECISION NOT NULL,
+    citation_accuracy DOUBLE PRECISION NOT NULL,
+    overall_score DOUBLE PRECISION NOT NULL,
+    documents JSONB DEFAULT '[]'::jsonb,
+    user_feedback BOOLEAN,
+    user_rating INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_evaluation_metrics_trace_id_created_at
+    ON evaluation_metrics (trace_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_evaluation_metrics_feedback_id
+    ON evaluation_metrics (feedback_id);
+
 -- Trigger function for updated_at columns
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$

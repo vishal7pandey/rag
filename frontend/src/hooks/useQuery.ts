@@ -155,6 +155,7 @@ export const useQuery = () => {
     messages,
     isLoading,
     error,
+    conversationId: conversationIdRef.current,
     submitQuery,
     clearChat,
   };

@@ -39,6 +39,7 @@ export interface ChatMessage {
     tokenCount?: number;
     responseTimeMs?: number;
     uploadedDocuments?: string[];
+    traceId?: string;
   };
 }
 
@@ -60,6 +61,7 @@ export interface QueryResponse {
     responseTimeMs: number;
     retrievedChunks: number;
     confidenceScore?: number;
+    traceId?: string;
   };
 }
 

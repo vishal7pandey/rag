@@ -102,6 +102,9 @@ export class QueryService {
         );
       }
 
+      const traceId =
+        response.headers.get('x-trace-id') ?? response.headers.get('X-Trace-ID');
+
       const contentType = response.headers.get('content-type') ?? '';
       if (contentType.includes('application/json')) {
         const data = (await response.json()) as any;
@@ -149,6 +152,7 @@ export class QueryService {
               typeof data?.confidence_score === 'number'
                 ? (data.confidence_score as number)
                 : undefined,
+            traceId: traceId ?? undefined,
           },
         };
 
@@ -180,6 +184,16 @@ export class QueryService {
           if (line.startsWith('data: ')) {
             try {
               const data = JSON.parse(line.slice(6)) as SSEChunk;
+              if (data.type === 'end') {
+                const meta = data.metadata;
+                data.metadata = {
+                  tokenCount: meta?.tokenCount ?? 0,
+                  responseTimeMs: meta?.responseTimeMs ?? 0,
+                  retrievedChunks: meta?.retrievedChunks ?? 0,
+                  confidenceScore: meta?.confidenceScore,
+                  traceId: traceId ?? meta?.traceId,
+                };
+              }
               onProgress?.(data);
               yield data;
             } catch (error) {
@@ -192,6 +206,16 @@ export class QueryService {
       if (buffer.startsWith('data: ')) {
         try {
           const data = JSON.parse(buffer.slice(6)) as SSEChunk;
+          if (data.type === 'end') {
+            const meta = data.metadata;
+            data.metadata = {
+              tokenCount: meta?.tokenCount ?? 0,
+              responseTimeMs: meta?.responseTimeMs ?? 0,
+              retrievedChunks: meta?.retrievedChunks ?? 0,
+              confidenceScore: meta?.confidenceScore,
+              traceId: traceId ?? meta?.traceId,
+            };
+          }
           onProgress?.(data);
           yield data;
         } catch (error) {

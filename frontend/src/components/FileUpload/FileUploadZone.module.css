@@ -110,7 +110,7 @@
 
 .emptyState {
   text-align: center;
-  padding: var(--space-6);
+  padding: var(--space-3) 0 0 0;
   color: var(--color-text-secondary);
 }
 

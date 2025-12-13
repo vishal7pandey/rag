@@ -10,7 +10,8 @@ import styles from './ChatPanel.module.css';
 import { SourcesPanel } from '@/components/Sources/SourcesPanel';
 
 export const ChatPanel: React.FC = () => {
-  const { messages, isLoading, error, submitQuery, clearChat } = useQuery();
+  const { messages, isLoading, error, submitQuery, clearChat, conversationId } =
+    useQuery();
 
   const lastCitationFocusRef = useRef<HTMLElement | null>(null);
 
@@ -71,7 +72,11 @@ export const ChatPanel: React.FC = () => {
   return (
     <div className={styles.panel}>
       <div className={styles.chatSection}>
-        <ChatHistory messages={messages} onCitationClick={handleCitationClick} />
+        <ChatHistory
+          messages={messages}
+          conversationId={conversationId}
+          onCitationClick={handleCitationClick}
+        />
 
         {error && (
           <div className={styles.errorBanner} role="alert">

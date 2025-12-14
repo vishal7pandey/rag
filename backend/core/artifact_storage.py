@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, List, Protocol
 
 from sqlalchemy import text
@@ -78,6 +79,7 @@ class PostgresArtifactStorage:
         artifact_type: str,
         artifact_data: Dict[str, Any],
     ) -> None:
+        artifact_json = json.dumps(artifact_data)
         with self._postgres.engine.begin() as conn:
             conn.execute(
                 text(
@@ -93,7 +95,7 @@ class PostgresArtifactStorage:
                 {
                     "trace_id": trace_id,
                     "artifact_type": artifact_type,
-                    "artifact_data": artifact_data,
+                    "artifact_data": artifact_json,
                 },
             )
 

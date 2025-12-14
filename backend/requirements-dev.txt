@@ -7,3 +7,4 @@ flake8>=6.1.0
 mypy>=1.7.0
 httpx>=0.25.0
 pdfplumber>=0.11.0
+reportlab>=4.0.0

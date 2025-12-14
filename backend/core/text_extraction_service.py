@@ -7,12 +7,11 @@ extractor to produce an `ExtractedDocument`.
 
 from __future__ import annotations
 
-from typing import Callable
 from uuid import UUID
 
 from backend.core.data_models import ExtractedDocument
 from backend.core.extractors.markdown_extractor import MarkdownExtractor
-from backend.core.extractors.pdf_extractor import PDFExtractor
+from backend.core.extractors.pdf_pipeline import PDFExtractionPipeline
 from backend.core.extractors.text_extractor import TextExtractor
 from backend.core.format_detector import FileFormat, FormatDetector
 from backend.core.logging import get_logger
@@ -23,6 +22,7 @@ class TextExtractionService:
 
     def __init__(self, detector: FormatDetector | None = None) -> None:
         self._detector = detector or FormatDetector()
+        self._pdf_pipeline = PDFExtractionPipeline()
 
     def extract(
         self, filename: str, content: bytes, document_id: UUID
@@ -47,7 +47,15 @@ class TextExtractionService:
         fmt = self._detector.detect_format(filename, content)
 
         if fmt == FileFormat.PDF:
-            extractor: Callable[..., ExtractedDocument] = PDFExtractor.extract
+
+            def extractor(
+                *, content: bytes, document_id: UUID, filename: str
+            ) -> ExtractedDocument:
+                return self._pdf_pipeline.extract(
+                    content=content,
+                    document_id=document_id,
+                    filename=filename,
+                ).document
         elif fmt == FileFormat.TEXT:
             extractor = TextExtractor.extract
         elif fmt == FileFormat.MARKDOWN:

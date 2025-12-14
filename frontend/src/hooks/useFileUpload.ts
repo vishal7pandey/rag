@@ -5,6 +5,7 @@ import {
   getFileFormatFromFilename,
 } from '@/types/upload';
 import uploadService from '@/services/uploadService';
+import { apiClient } from '@/services/apiClient';
 
 const STORAGE_KEY = 'rag_uploaded_files';
 
@@ -59,6 +60,85 @@ export const useFileUpload = () => {
     } catch {
       // ignore storage errors
     }
+  }, [files]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const pollIntervalMs = 1500;
+    const maxPollMinutes = 10;
+    const maxPollMs = maxPollMinutes * 60 * 1000;
+
+    const tick = async () => {
+      const targets = files.filter((f) => f.status === 'processing' && !!f.ingestionId);
+      if (targets.length === 0) return;
+
+      await Promise.all(
+        targets.map(async (file) => {
+          try {
+            const startedAt = file.uploadedAt instanceof Date ? file.uploadedAt.getTime() : Date.now();
+            if (Date.now() - startedAt > maxPollMs) {
+              setFiles((prev) =>
+                prev.map((p) =>
+                  p.id === file.id
+                    ? {
+                        ...p,
+                        status: 'error',
+                        errorMessage: 'Timed out waiting for ingestion to complete.',
+                      }
+                    : p,
+                ),
+              );
+              return;
+            }
+
+            const resp = await apiClient.get(`/ingestion/status/${file.ingestionId}`);
+            const data = resp.data as any;
+            const statusRaw = String(data?.status ?? '').toLowerCase();
+
+            if (statusRaw === 'completed') {
+              setFiles((prev) =>
+                prev.map((p) =>
+                  p.id === file.id
+                    ? {
+                        ...p,
+                        status: 'success',
+                        documentId: data?.document_id ? String(data.document_id) : p.documentId,
+                        ingestionId: data?.ingestion_id ? String(data.ingestion_id) : p.ingestionId,
+                        errorMessage: undefined,
+                      }
+                    : p,
+                ),
+              );
+              return;
+            }
+
+            if (statusRaw === 'failed') {
+              setFiles((prev) =>
+                prev.map((p) =>
+                  p.id === file.id
+                    ? {
+                        ...p,
+                        status: 'error',
+                        errorMessage: data?.error_message ? String(data.error_message) : 'Ingestion failed.',
+                      }
+                    : p,
+                ),
+              );
+              return;
+            }
+          } catch {
+            // ignore transient polling errors
+          }
+        }),
+      );
+    };
+
+    const interval = window.setInterval(() => {
+      void tick();
+    }, pollIntervalMs);
+
+    return () => window.clearInterval(interval);
   }, [files]);
 
   const handleFileSelection = useCallback(async (selectedFiles: File[]) => {

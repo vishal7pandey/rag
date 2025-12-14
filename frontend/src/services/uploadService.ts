@@ -8,6 +8,8 @@ import {
   getFileFormatFromExtension,
 } from '@/types/upload';
 
+const MAX_FILES_PER_REQUEST = 10;
+
 export class UploadError extends Error {
   constructor(
     public code: string,
@@ -26,7 +28,16 @@ export class UploadService {
     const valid: File[] = [];
     const errors = new Map<string, string>();
 
-    for (const file of files) {
+    const candidateFiles =
+      files.length > MAX_FILES_PER_REQUEST
+        ? (errors.set(
+            '__global__',
+            `Maximum ${MAX_FILES_PER_REQUEST} files per upload. You selected ${files.length}.`,
+          ),
+          files.slice(0, MAX_FILES_PER_REQUEST))
+        : files;
+
+    for (const file of candidateFiles) {
       const ext = file.name.split('.').pop();
       const format = getFileFormatFromExtension(ext);
 

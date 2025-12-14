@@ -5,6 +5,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
+from pydantic.config import ConfigDict
 
 from backend.core.embedding_models import (
     BatchEmbeddingConfig,
@@ -27,8 +28,7 @@ class _EmbeddingClientProtocol(BaseModel):  # type: ignore[misc]
     This is primarily to make the provider easy to mock in tests.
     """
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     client: Any
 

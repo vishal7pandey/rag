@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from math import sqrt
 from typing import Any, Dict, List, Optional
@@ -18,19 +19,50 @@ from backend.core.vector_storage import VectorDBStorageLayer
 class QueryEmbeddingService:
     """Generate embeddings for query strings.
 
-    In this story, this service is intentionally minimal and is expected to
-    be stubbed or provided with a concrete implementation in tests. The
-    only contract is the async ``embed_query`` method.
+    The embedding client is injected to keep this service easy to test.
+    Any object exposing ``embed(text: str) -> Dict[str, Any]`` compatible with
+    ``OpenAIEmbeddingClient.embed`` can be used.
     """
+
+    def __init__(self, client: Any | None = None) -> None:
+        self._client = client
+        self._logger = get_logger("rag.core.query_embedding_service")
 
     async def embed_query(
         self,
         query_text: str,
         trace_context: Optional[Dict[str, Any]] = None,
-    ) -> List[float]:  # pragma: no cover - default impl should be overridden
-        raise EmbeddingProviderError(
-            "QueryEmbeddingService.embed_query must be provided by caller or tests"
+    ) -> List[float]:
+        if self._client is None:
+            raise EmbeddingProviderError(
+                "No embedding client configured for QueryEmbeddingService"
+            )
+
+        if not query_text or not query_text.strip():
+            raise ValueError("query_text cannot be empty")
+
+        trace_context = trace_context or {}
+
+        start = time.time()
+        result: Dict[str, Any] = await asyncio.to_thread(self._client.embed, query_text)
+        latency_ms = (time.time() - start) * 1000.0
+
+        embedding = result.get("embedding")
+        if not isinstance(embedding, list):
+            raise EmbeddingProviderError("Embedding client returned invalid embedding")
+
+        self._logger.info(
+            "query_embedding_completed",
+            extra={
+                "context": {
+                    "latency_ms": latency_ms,
+                    "embedding_dim": len(embedding),
+                    "trace_context": trace_context,
+                }
+            },
         )
+
+        return embedding
 
 
 class RetrieverService:

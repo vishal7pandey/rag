@@ -69,6 +69,9 @@ from backend.core.exceptions import (
     RateLimitError,
 )
 from backend.core.file_validator import FileValidator
+from backend.core.embedding_models import BatchEmbeddingConfig
+from backend.core.embedding_provider import BatchEmbeddingProvider
+from backend.core.embedding_service import EmbeddingService
 from backend.core.embedding_provider import EmbeddingProviderError
 from backend.core.ingestion_orchestrator import IngestionOrchestrator
 from backend.core.ingestion_store import IngestionJobStore
@@ -84,6 +87,8 @@ from backend.core.vector_storage import InMemoryVectorDBStorageLayer
 from backend.core.logging import get_logger
 from backend.data_layer.postgres_client import PostgresClient
 from backend.evaluation.quality_evaluator import QualityEvaluator
+from backend.providers.openai_client import OpenAIEmbeddingClient
+from backend.core.vector_storage_postgres import PostgresVectorDBStorageLayer
 
 
 router = APIRouter()
@@ -98,16 +103,43 @@ _RATE_LIMITER = RateLimiter()
 
 # Ingestion orchestration components for Story 010.
 _INGESTION_JOB_STORE = IngestionJobStore()
+
+# Query orchestration components for Story 011 / 012.
+if getenv("DATABASE_URL"):
+    _VECTOR_STORAGE = PostgresVectorDBStorageLayer(PostgresClient())
+else:
+    _VECTOR_STORAGE = InMemoryVectorDBStorageLayer()
+
+_EMBEDDING_SERVICE: EmbeddingService | None
+if getenv("OPENAI_API_KEY"):
+    _EMBEDDING_CLIENT = OpenAIEmbeddingClient()
+    _EMBEDDING_PROVIDER = BatchEmbeddingProvider(
+        config=BatchEmbeddingConfig(
+            batch_size=min(settings.OPENAI_EMBEDDING_BATCH_SIZE, 50),
+            model=settings.OPENAI_EMBEDDING_MODEL,
+        ),
+        client=_EMBEDDING_CLIENT,
+    )
+    _EMBEDDING_SERVICE = EmbeddingService(
+        provider=_EMBEDDING_PROVIDER,
+        storage=_VECTOR_STORAGE,
+    )
+else:  # pragma: no cover - exercised via tests / non-configured envs
+    _EMBEDDING_SERVICE = None
+
 _INGESTION_ORCHESTRATOR = IngestionOrchestrator(
     extraction_service=None,
     chunking_service=None,
-    embedding_service=None,
+    embedding_service=_EMBEDDING_SERVICE,
     job_store=_INGESTION_JOB_STORE,
+    postgres_client=PostgresClient() if getenv("DATABASE_URL") else None,
 )
 
-# Query orchestration components for Story 011 / 012.
-_VECTOR_STORAGE = InMemoryVectorDBStorageLayer()
-_QUERY_EMBEDDING_SERVICE = QueryEmbeddingService()
+_QUERY_EMBEDDING_SERVICE: QueryEmbeddingService
+if getenv("OPENAI_API_KEY"):
+    _QUERY_EMBEDDING_SERVICE = QueryEmbeddingService(client=_EMBEDDING_CLIENT)
+else:  # pragma: no cover - exercised via tests / non-configured envs
+    _QUERY_EMBEDDING_SERVICE = QueryEmbeddingService()
 _QUERY_EMBEDDING_CACHE = QueryEmbeddingCache()
 _RETRIEVER_SERVICE = RetrieverService(storage=_VECTOR_STORAGE)
 _QUERY_ORCHESTRATOR = QueryOrchestrator(
@@ -323,14 +355,12 @@ async def ingest_upload(
         if r.is_valid
     ]
 
-    # Note: real implementation will persist status and enqueue background work.
-    resp = IngestionResponse(
+    # Create an IngestionJob in the core job store.
+    job = _INGESTION_JOB_STORE.create_job(
         ingestion_id=ingestion_id,
-        status=IngestionStatus.PENDING,
         document_id=document_id,
         files=uploaded_files,
     )
-    _INGESTION_STORE[ingestion_id] = resp
 
     logger.info(
         "Ingestion upload accepted",
@@ -342,7 +372,16 @@ async def ingest_upload(
         },
     )
 
-    return resp
+    return IngestionResponse(
+        ingestion_id=job.ingestion_id,
+        status=IngestionStatus(job.status.value),
+        document_id=job.document_id,
+        files=uploaded_files,
+        chunks_created=job.chunks_created,
+        progress_percent=job.progress_percent,
+        error_message=job.error_message,
+        created_at=job.created_at,
+    )
 
 
 @router.get(
@@ -353,14 +392,23 @@ async def ingest_upload(
 async def ingest_status(ingestion_id: UUID) -> IngestionResponse:
     """Return current ingestion status for the given ingestion_id (stubbed)."""
 
-    resp = _INGESTION_STORE.get(ingestion_id)
-    if resp is None:
+    job = _INGESTION_JOB_STORE.get_job(ingestion_id)
+    if job is None:
         raise HTTPException(status_code=404, detail="Ingestion not found")
     logger.info(
         "Ingestion status requested",
-        extra={"ingestion_id": str(ingestion_id), "status": resp.status.value},
+        extra={"ingestion_id": str(ingestion_id), "status": job.status.value},
     )
-    return resp
+    return IngestionResponse(
+        ingestion_id=job.ingestion_id,
+        status=IngestionStatus(job.status.value),
+        document_id=job.document_id,
+        files=job.files,
+        chunks_created=job.chunks_created,
+        progress_percent=job.progress_percent,
+        error_message=job.error_message,
+        created_at=job.created_at,
+    )
 
 
 @router.post(

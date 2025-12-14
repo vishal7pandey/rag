@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 
 from backend.api.schemas import DocumentMetadata, IngestionConfig, UploadedFileInfo
 from backend.core.chunking_models import Chunk
+from backend.core.embedding_models import BatchEmbeddingConfig
 from backend.core.ingestion_models import IngestionStatus
 from backend.core.ingestion_orchestrator import IngestionOrchestrator
 from backend.core.ingestion_store import IngestionJobStore
@@ -80,7 +81,7 @@ async def test_full_pipeline_success() -> None:
     # Mock embedding result (embeddings + metrics)
     async def fake_embed_and_store(
         chunks: List[Chunk],
-        embedding_config: IngestionConfig,
+        embedding_config: BatchEmbeddingConfig,
         trace_context: Dict[str, Any] | None = None,
     ) -> Any:
         return SimpleNamespace(
@@ -194,7 +195,7 @@ async def test_embedding_failure_marks_job_failed_after_chunking() -> None:
 
     async def failing_embed_and_store(
         chunks: List[Chunk],
-        embedding_config: IngestionConfig,
+        embedding_config: BatchEmbeddingConfig,
         trace_context: Dict[str, Any] | None = None,
     ) -> Any:
         raise RuntimeError("Rate limited")

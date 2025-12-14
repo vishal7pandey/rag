@@ -75,6 +75,14 @@ class RecursiveChunker:
         text = text or ""
         length = len(text)
 
+        # If the text already fits in one chunk, avoid splitting purely on
+        # whitespace. Doing so tends to produce word-sized chunks, which can
+        # later be discarded by min-size filters and yield zero chunks.
+        if length <= chunk_size and separators == [" "]:
+            if not text.strip():
+                return []
+            return [{"content": text, "start": offset, "end": offset + length}]
+
         # If we have no separators left, fall back to character-level splitting.
         if not separators:
             if not text.strip():

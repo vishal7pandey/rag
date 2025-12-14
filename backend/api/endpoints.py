@@ -8,9 +8,9 @@ later stories.
 from __future__ import annotations
 
 import json
+import asyncio
 import time
 from datetime import datetime, timedelta, timezone
-from os import getenv
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
@@ -69,6 +69,9 @@ from backend.core.exceptions import (
     RateLimitError,
 )
 from backend.core.file_validator import FileValidator
+from backend.core.embedding_models import BatchEmbeddingConfig
+from backend.core.embedding_provider import BatchEmbeddingProvider
+from backend.core.embedding_service import EmbeddingService
 from backend.core.embedding_provider import EmbeddingProviderError
 from backend.core.ingestion_orchestrator import IngestionOrchestrator
 from backend.core.ingestion_store import IngestionJobStore
@@ -84,6 +87,9 @@ from backend.core.vector_storage import InMemoryVectorDBStorageLayer
 from backend.core.logging import get_logger
 from backend.data_layer.postgres_client import PostgresClient
 from backend.evaluation.quality_evaluator import QualityEvaluator
+from backend.providers.openai_client import OpenAIEmbeddingClient
+from backend.providers.openai_client import OpenAIGenerationClient
+from backend.core.vector_storage_postgres import PostgresVectorDBStorageLayer
 
 
 router = APIRouter()
@@ -98,16 +104,53 @@ _RATE_LIMITER = RateLimiter()
 
 # Ingestion orchestration components for Story 010.
 _INGESTION_JOB_STORE = IngestionJobStore()
+
+# Query orchestration components for Story 011 / 012.
+_DATABASE_URL = settings.DATABASE_URL
+if _DATABASE_URL:
+    _VECTOR_STORAGE = PostgresVectorDBStorageLayer(PostgresClient(_DATABASE_URL))
+else:
+    _VECTOR_STORAGE = InMemoryVectorDBStorageLayer()
+
+_EMBEDDING_SERVICE: EmbeddingService | None
+_OPENAI_API_KEY = settings.OPENAI_API_KEY
+if _OPENAI_API_KEY:
+    from backend.config.openai_config import OpenAIEmbeddingConfig
+
+    _EMBEDDING_CLIENT = OpenAIEmbeddingClient(
+        api_key=_OPENAI_API_KEY,
+        config=OpenAIEmbeddingConfig(
+            model=settings.OPENAI_EMBEDDING_MODEL,
+            batch_size=settings.OPENAI_EMBEDDING_BATCH_SIZE,
+        ),
+    )
+    _EMBEDDING_PROVIDER = BatchEmbeddingProvider(
+        config=BatchEmbeddingConfig(
+            batch_size=min(settings.OPENAI_EMBEDDING_BATCH_SIZE, 50),
+            model=settings.OPENAI_EMBEDDING_MODEL,
+        ),
+        client=_EMBEDDING_CLIENT,
+    )
+    _EMBEDDING_SERVICE = EmbeddingService(
+        provider=_EMBEDDING_PROVIDER,
+        storage=_VECTOR_STORAGE,
+    )
+else:  # pragma: no cover - exercised via tests / non-configured envs
+    _EMBEDDING_SERVICE = None
+
 _INGESTION_ORCHESTRATOR = IngestionOrchestrator(
     extraction_service=None,
     chunking_service=None,
-    embedding_service=None,
+    embedding_service=_EMBEDDING_SERVICE,
     job_store=_INGESTION_JOB_STORE,
+    postgres_client=PostgresClient(_DATABASE_URL) if _DATABASE_URL else None,
 )
 
-# Query orchestration components for Story 011 / 012.
-_VECTOR_STORAGE = InMemoryVectorDBStorageLayer()
-_QUERY_EMBEDDING_SERVICE = QueryEmbeddingService()
+_QUERY_EMBEDDING_SERVICE: QueryEmbeddingService
+if _OPENAI_API_KEY:
+    _QUERY_EMBEDDING_SERVICE = QueryEmbeddingService(client=_EMBEDDING_CLIENT)
+else:  # pragma: no cover - exercised via tests / non-configured envs
+    _QUERY_EMBEDDING_SERVICE = QueryEmbeddingService()
 _QUERY_EMBEDDING_CACHE = QueryEmbeddingCache()
 _RETRIEVER_SERVICE = RetrieverService(storage=_VECTOR_STORAGE)
 _QUERY_ORCHESTRATOR = QueryOrchestrator(
@@ -121,7 +164,7 @@ _INPUT_VALIDATOR = InputValidator()
 
 # Debug configuration and artifact logging components for Story 016.
 _DEBUG_SETTINGS = DebugSettings.from_env()
-if getenv("DATABASE_URL"):
+if _DATABASE_URL:
     try:
         _ARTIFACT_STORAGE = PostgresArtifactStorage()
     except Exception:  # pragma: no cover - falls back to in-memory storage
@@ -131,9 +174,9 @@ else:
 
 
 _POSTGRES_CLIENT: PostgresClient | None
-if getenv("DATABASE_URL"):
+if _DATABASE_URL:
     try:
-        _POSTGRES_CLIENT = PostgresClient()
+        _POSTGRES_CLIENT = PostgresClient(_DATABASE_URL)
     except Exception:
         _POSTGRES_CLIENT = None
 else:
@@ -149,9 +192,20 @@ _ARTIFACT_LOGGER = ArtifactLogger(_DEBUG_SETTINGS, _ARTIFACT_STORAGE)
 # override or disable this by monkeypatching _GENERATION_ORCHESTRATOR.
 _GENERATION_ERROR_MAPPER = GenerationErrorMapper()
 _GENERATION_ORCHESTRATOR: Optional[GenerationOrchestrator]
-if getenv("OPENAI_API_KEY"):
+if _OPENAI_API_KEY:
+    from backend.config.openai_config import OpenAIGenerationConfig
+
+    _GENERATION_CLIENT = OpenAIGenerationClient(
+        api_key=_OPENAI_API_KEY,
+        config=OpenAIGenerationConfig(
+            model=settings.OPENAI_GENERATION_MODEL,
+            default_temperature=settings.OPENAI_TEMPERATURE,
+            default_max_output_tokens=settings.OPENAI_MAX_OUTPUT_TOKENS,
+        ),
+    )
     _GENERATION_ORCHESTRATOR = GenerationOrchestrator(
-        query_orchestrator=_QUERY_ORCHESTRATOR
+        query_orchestrator=_QUERY_ORCHESTRATOR,
+        generation_client=_GENERATION_CLIENT,
     )
 else:  # pragma: no cover - exercised indirectly via tests
     _GENERATION_ORCHESTRATOR = None
@@ -323,14 +377,12 @@ async def ingest_upload(
         if r.is_valid
     ]
 
-    # Note: real implementation will persist status and enqueue background work.
-    resp = IngestionResponse(
+    # Create an IngestionJob in the core job store.
+    job = _INGESTION_JOB_STORE.create_job(
         ingestion_id=ingestion_id,
-        status=IngestionStatus.PENDING,
         document_id=document_id,
         files=uploaded_files,
     )
-    _INGESTION_STORE[ingestion_id] = resp
 
     logger.info(
         "Ingestion upload accepted",
@@ -342,7 +394,36 @@ async def ingest_upload(
         },
     )
 
-    return resp
+    async def _run_ingestion() -> None:
+        try:
+            await _INGESTION_ORCHESTRATOR.ingest_and_store(
+                job_id=job.ingestion_id,
+                files=file_tuples,
+                document_metadata=metadata_model or DocumentMetadata(),
+                ingestion_config=config_model or IngestionConfig(),
+                trace_context=trace_ctx,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error(
+                "Ingestion background task failed",
+                extra={"ingestion_id": str(ingestion_id), "error": str(exc)[:200]},
+                exc_info=exc,
+            )
+
+    asyncio.create_task(_run_ingestion())
+
+    # Return immediately (202 Accepted). The job begins in PENDING state and
+    # will transition to processing/completed/failed asynchronously.
+    return IngestionResponse(
+        ingestion_id=job.ingestion_id,
+        status=IngestionStatus(job.status.value),
+        document_id=job.document_id,
+        files=uploaded_files,
+        chunks_created=job.chunks_created,
+        progress_percent=job.progress_percent,
+        error_message=job.error_message,
+        created_at=job.created_at,
+    )
 
 
 @router.get(
@@ -350,17 +431,31 @@ async def ingest_upload(
     response_model=IngestionResponse,
     tags=["Ingestion"],
 )
+@router.get(
+    "/api/ingestion/status/{ingestion_id}",
+    response_model=IngestionResponse,
+    tags=["Ingestion"],
+)
 async def ingest_status(ingestion_id: UUID) -> IngestionResponse:
     """Return current ingestion status for the given ingestion_id (stubbed)."""
 
-    resp = _INGESTION_STORE.get(ingestion_id)
-    if resp is None:
+    job = _INGESTION_JOB_STORE.get_job(ingestion_id)
+    if job is None:
         raise HTTPException(status_code=404, detail="Ingestion not found")
     logger.info(
         "Ingestion status requested",
-        extra={"ingestion_id": str(ingestion_id), "status": resp.status.value},
+        extra={"ingestion_id": str(ingestion_id), "status": job.status.value},
     )
-    return resp
+    return IngestionResponse(
+        ingestion_id=job.ingestion_id,
+        status=IngestionStatus(job.status.value),
+        document_id=job.document_id,
+        files=job.files,
+        chunks_created=job.chunks_created,
+        progress_percent=job.progress_percent,
+        error_message=job.error_message,
+        created_at=job.created_at,
+    )
 
 
 @router.post(
@@ -550,11 +645,27 @@ async def query_endpoint(payload: QueryRequest, request: Request) -> QueryRespon
             try:
                 response = await _query_json(payload)
 
-                for token in response.answer.split(" "):
-                    if not token:
-                        continue
-                    chunk_payload = {"type": "chunk", "content": token + " "}
+                answer_text = response.answer or ""
+                logger.info(
+                    "SSE answer debug",
+                    extra={
+                        "answer_length": len(answer_text),
+                        "answer_preview": answer_text[:200]
+                        if answer_text
+                        else "(empty)",
+                    },
+                )
+
+                if not answer_text.strip():
+                    fallback = "I could not generate an answer for this query. Please try rephrasing."
+                    chunk_payload = {"type": "chunk", "content": fallback}
                     yield f"data: {json.dumps(chunk_payload)}\n\n"
+                else:
+                    for token in answer_text.split(" "):
+                        if not token:
+                            continue
+                        chunk_payload = {"type": "chunk", "content": token + " "}
+                        yield f"data: {json.dumps(chunk_payload)}\n\n"
 
                 citations_out: List[Dict[str, Any]] = []
                 for idx, entry in enumerate(response.citations[:5], start=1):
@@ -581,10 +692,15 @@ async def query_endpoint(payload: QueryRequest, request: Request) -> QueryRespon
                     )
 
                 elapsed_ms = int((time.time() - start_time) * 1000)
+                token_count = 0
+                if isinstance(response.metadata, dict):
+                    total_tokens_used = response.metadata.get("total_tokens_used")
+                    if isinstance(total_tokens_used, int):
+                        token_count = total_tokens_used
                 metadata_out = {
-                    "tokenCount": 0,
+                    "tokenCount": token_count,
                     "responseTimeMs": elapsed_ms,
-                    "retrievedChunks": len(response.used_chunks or []),
+                    "retrievedChunks": len(response.retrieved_chunks or []),
                 }
 
                 end_payload = {

@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     VERSION: str = "0.1.0"
     ENVIRONMENT: str = "dev"  # dev | staging | prod
 
+    DATABASE_URL: str = ""
+
     # OpenAI configuration (raw env fields)
     OPENAI_API_KEY: str = ""
     OPENAI_ORG_ID: str = ""

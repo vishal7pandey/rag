@@ -4,9 +4,13 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
+from sqlalchemy import text
+
 from backend.api.schemas import DocumentMetadata, IngestionConfig
 from backend.core.chunking_models import ChunkingConfig
 from backend.core.chunking_service import ChunkingService
+from backend.core.embedding_models import BatchEmbeddingConfig
+from backend.config.settings import settings
 from backend.core.ingestion_models import (
     IngestionContext,
     IngestionJob,
@@ -15,6 +19,7 @@ from backend.core.ingestion_models import (
 from backend.core.ingestion_store import IngestionJobStore
 from backend.core.logging import get_logger
 from backend.core.text_extraction_service import TextExtractionService
+from backend.data_layer.postgres_client import PostgresClient
 
 
 class IngestionOrchestrator:
@@ -32,6 +37,7 @@ class IngestionOrchestrator:
         chunking_service: Optional[ChunkingService] = None,
         embedding_service: Any = None,
         job_store: Optional[IngestionJobStore] = None,
+        postgres_client: Optional[PostgresClient] = None,
     ) -> None:
         self._extraction_service = extraction_service or TextExtractionService()
         self._chunking_service = chunking_service or ChunkingService()
@@ -41,6 +47,7 @@ class IngestionOrchestrator:
         # ``embed_and_store``.
         self._embedding_service = embedding_service
         self._job_store = job_store or IngestionJobStore()
+        self._postgres_client = postgres_client
         self._logger = get_logger("rag.core.ingestion_orchestrator")
 
     async def ingest_and_store(
@@ -172,6 +179,148 @@ class IngestionOrchestrator:
             context.log("chunking", "chunking_failed", error=error)
             return job
 
+        if self._postgres_client is not None and job.chunks:
+            context.log("storage", "documents_chunks_persist_started")
+
+            user_id = "anonymous"
+            for chunk in job.chunks:
+                chunk.metadata.setdefault("user_id", user_id)
+
+            try:
+                with self._postgres_client.engine.begin() as conn:
+                    conn.execute(
+                        text(
+                            """
+                            INSERT INTO documents (
+                                id,
+                                user_id,
+                                filename,
+                                document_type,
+                                total_chunks,
+                                file_size,
+                                ingestion_status
+                            ) VALUES (
+                                :id,
+                                :user_id,
+                                :filename,
+                                :document_type,
+                                :total_chunks,
+                                :file_size,
+                                :ingestion_status
+                            )
+                            ON CONFLICT (id) DO UPDATE SET
+                                user_id = EXCLUDED.user_id,
+                                filename = EXCLUDED.filename,
+                                document_type = EXCLUDED.document_type,
+                                total_chunks = EXCLUDED.total_chunks,
+                                file_size = EXCLUDED.file_size,
+                                ingestion_status = EXCLUDED.ingestion_status,
+                                updated_at = NOW()
+                            """
+                        ),
+                        {
+                            "id": str(job.document_id),
+                            "user_id": user_id,
+                            "filename": filename,
+                            "document_type": getattr(extracted, "format", None),
+                            "total_chunks": len(job.chunks),
+                            "file_size": len(content),
+                            "ingestion_status": "processing",
+                        },
+                    )
+
+                    for chunk_index, chunk in enumerate(job.chunks):
+                        chunk.metadata["chunk_index"] = int(chunk_index)
+                        metadata = chunk.metadata or {}
+                        source = (
+                            metadata.get("source")
+                            or metadata.get("source_filename")
+                            or filename
+                        )
+
+                        conn.execute(
+                            text(
+                                """
+                                INSERT INTO chunks (
+                                    id,
+                                    document_id,
+                                    chunk_index,
+                                    content,
+                                    original_content,
+                                    embedding_model,
+                                    source,
+                                    document_type,
+                                    language,
+                                    page_number,
+                                    section_title,
+                                    user_id,
+                                    quality_score,
+                                    is_duplicate
+                                ) VALUES (
+                                    :id,
+                                    :document_id,
+                                    :chunk_index,
+                                    :content,
+                                    :original_content,
+                                    :embedding_model,
+                                    :source,
+                                    :document_type,
+                                    :language,
+                                    :page_number,
+                                    :section_title,
+                                    :user_id,
+                                    :quality_score,
+                                    :is_duplicate
+                                )
+                                ON CONFLICT (id) DO UPDATE SET
+                                    content = EXCLUDED.content,
+                                    original_content = EXCLUDED.original_content,
+                                    embedding_model = EXCLUDED.embedding_model,
+                                    source = EXCLUDED.source,
+                                    document_type = EXCLUDED.document_type,
+                                    language = EXCLUDED.language,
+                                    page_number = EXCLUDED.page_number,
+                                    section_title = EXCLUDED.section_title,
+                                    user_id = EXCLUDED.user_id,
+                                    quality_score = EXCLUDED.quality_score,
+                                    is_duplicate = EXCLUDED.is_duplicate,
+                                    updated_at = NOW()
+                                """
+                            ),
+                            {
+                                "id": str(chunk.chunk_id),
+                                "document_id": str(chunk.document_id),
+                                "chunk_index": int(chunk_index),
+                                "content": chunk.content,
+                                "original_content": chunk.original_content,
+                                "embedding_model": ingestion_config.embedding_model,
+                                "source": source,
+                                "document_type": metadata.get("document_type"),
+                                "language": metadata.get("language", "en"),
+                                "page_number": metadata.get("page_number"),
+                                "section_title": metadata.get("section_title"),
+                                "user_id": user_id,
+                                "quality_score": float(chunk.quality_score),
+                                "is_duplicate": bool(chunk.is_duplicate),
+                            },
+                        )
+
+                context.log(
+                    "storage",
+                    "documents_chunks_persist_completed",
+                    chunks=len(job.chunks),
+                )
+            except Exception as exc:  # pragma: no cover
+                error = str(exc)
+                self._job_store.update_status(
+                    job_id,
+                    IngestionStatus.FAILED,
+                    error_message=error,
+                    error_stage="storage",
+                )
+                context.log("storage", "documents_chunks_persist_failed", error=error)
+                return job
+
         # ------------------------------------------------------------------
         # Stage 3: Embedding (optional in this story)
         # ------------------------------------------------------------------
@@ -179,10 +328,17 @@ class IngestionOrchestrator:
             context.log("embedding", "embedding_started")
 
             try:
+                embedding_config = BatchEmbeddingConfig(
+                    batch_size=min(settings.OPENAI_EMBEDDING_BATCH_SIZE, 50),
+                    model=ingestion_config.embedding_model,
+                    embedding_dimension=1536,
+                    skip_duplicate_content=True,
+                )
+
                 t0 = time.time()
                 embed_result = await self._embedding_service.embed_and_store(
                     job.chunks,
-                    ingestion_config,
+                    embedding_config,
                     trace_context={"ingestion_id": str(job.ingestion_id)},
                 )
 
@@ -207,6 +363,21 @@ class IngestionOrchestrator:
                 )
             except Exception as exc:  # pragma: no cover - exercised via tests
                 error = str(exc)
+                if self._postgres_client is not None:
+                    try:
+                        with self._postgres_client.engine.begin() as conn:
+                            conn.execute(
+                                text(
+                                    """
+                                    UPDATE documents
+                                    SET ingestion_status = 'failed', updated_at = NOW()
+                                    WHERE id = :id
+                                    """
+                                ),
+                                {"id": str(job.document_id)},
+                            )
+                    except Exception:
+                        pass
                 self._job_store.update_status(
                     job_id,
                     IngestionStatus.FAILED,
@@ -220,6 +391,21 @@ class IngestionOrchestrator:
         # Completed
         # ------------------------------------------------------------------
         self._job_store.update_status(job_id, IngestionStatus.COMPLETED)
+        if self._postgres_client is not None:
+            try:
+                with self._postgres_client.engine.begin() as conn:
+                    conn.execute(
+                        text(
+                            """
+                            UPDATE documents
+                            SET ingestion_status = 'completed', updated_at = NOW()
+                            WHERE id = :id
+                            """
+                        ),
+                        {"id": str(job.document_id)},
+                    )
+            except Exception:
+                pass
         context.log(
             "ingestion",
             "ingestion_completed",
